@@ -34,5 +34,9 @@ docker run -d \
   -v redisdata:/data \
   redis:7.2
 ```
+### Front End (TypeScript+Vite+React)
+```bash
+npm create vite@latest frontend
 
-### Front End (React)
+
+```
