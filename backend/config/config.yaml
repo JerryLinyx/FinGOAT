@@ -1,0 +1,15 @@
+app:
+  name: FinGOAT
+  port: :3000
+     # gin 模式: debug / release
+
+database:
+  host: localhost
+  port: 5432
+  user: postgres
+  password: 2233
+  name: fingoat_db
+  sslmode: disable
+  timezone: Asia/Shanghai
+  maxIdleConns: 10
+  maxOpenConns: 100
