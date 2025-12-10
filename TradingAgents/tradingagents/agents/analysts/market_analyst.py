@@ -68,13 +68,19 @@ Volume-Based Indicators:
         prompt = prompt.partial(current_date=current_date)
         prompt = prompt.partial(ticker=ticker)
 
-        chain = prompt | llm.bind_tools(tools)
+        try:
+            chain = prompt | llm.bind_tools(tools)
+            tool_capable = True
+        except NotImplementedError:
+            # Some providers (e.g., Ollama models without tool-calling) don't support bind_tools.
+            chain = prompt | llm
+            tool_capable = False
 
         result = chain.invoke(state["messages"])
 
         report = ""
 
-        if len(result.tool_calls) == 0:
+        if not tool_capable or len(getattr(result, "tool_calls", []) or []) == 0:
             report = result.content
        
         return {
