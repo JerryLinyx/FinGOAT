@@ -60,6 +60,7 @@ docker run -d \
 npm create vite@latest frontend
 
 cd frontend
+npm install
 npm run build
 npm run dev
 ```
