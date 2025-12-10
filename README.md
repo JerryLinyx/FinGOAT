@@ -19,6 +19,8 @@ git submodule update --init --recursive
 
 #### Install dependencies
 ```bash
+cd backend
+
 go mod init github.com/JerryLinyx/FinGOAT
 
 go get -u github.com/gin-gonic/gin
@@ -55,6 +57,13 @@ docker run -d \
   -v redisdata:/data \
   redis:7.2
 ```
+#### Run the Server
+```bash
+go run main.go
+# curl http://localhost:3000/api/trading/health
+```
+
+
 ### Frontend Setup (TypeScript+Vite+React)
 ```bash
 npm create vite@latest frontend
@@ -63,6 +72,7 @@ cd frontend
 npm install
 npm run build
 npm run dev
+# http://localhost:5173/
 ```
 
 ### Agents Setup (LangChain+LangGraph+FastAPI)
@@ -96,6 +106,7 @@ cp .env.trading .env
 # dev mode (auto reload logs to console)
 python trading_service.py
 # python3 trading_service.py
+# http://localhost:8001/
 
 # production-style
 uvicorn trading_service:app --host 0.0.0.0 --port 8001 --workers 4
