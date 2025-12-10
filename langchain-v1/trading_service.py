@@ -80,6 +80,9 @@ class LLMConfig(BaseModel):
     quick_think_llm: str = Field(default="gpt-4o-mini", description="Quick thinking LLM model")
     max_debate_rounds: int = Field(default=1, ge=1, le=5, description="Maximum debate rounds")
     max_risk_discuss_rounds: int = Field(default=1, ge=1, le=5, description="Maximum risk discussion rounds")
+    provider: str = Field(default="openai", description="LLM provider identifier")
+    base_url: Optional[str] = Field(default=None, description="Override LLM base URL (for OpenAI-compatible endpoints)")
+    api_key: Optional[str] = Field(default=None, description="Optional override for provider API key")
 
 
 class DataVendorConfig(BaseModel):
@@ -183,6 +186,11 @@ def build_config(request: AnalysisRequest) -> Dict[str, Any]:
         config["quick_think_llm"] = request.llm_config.quick_think_llm
         config["max_debate_rounds"] = request.llm_config.max_debate_rounds
         config["max_risk_discuss_rounds"] = request.llm_config.max_risk_discuss_rounds
+        config["llm_provider"] = request.llm_config.provider
+        if request.llm_config.base_url:
+            config["backend_url"] = request.llm_config.base_url
+        if request.llm_config.api_key:
+            config["llm_api_key"] = request.llm_config.api_key
     
     # Update data vendor config if provided
     if request.data_vendor_config:

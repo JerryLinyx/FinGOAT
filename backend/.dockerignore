@@ -1,0 +1,35 @@
+# Binaries
+fingoat-backend
+*.exe
+*.dll
+*.so
+*.dylib
+
+# Test binary
+*.test
+
+# Output
+*.out
+
+# Vendor
+vendor/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+
+# Env files (keep for reference, but use secrets in production)
+# .env
+
+# Logs
+*.log
+
+# Build artifacts
+dist/
+build/

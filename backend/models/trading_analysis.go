@@ -15,6 +15,9 @@ type TradingAnalysisTask struct {
 	AnalysisDate          string     `gorm:"type:varchar(20);not null" json:"analysis_date"`
 	Status                string     `gorm:"type:varchar(20);not null" json:"status"` // pending/processing/completed/failed
 	Config                *string    `gorm:"type:jsonb" json:"config,omitempty"`
+	LLMProvider           string     `gorm:"type:varchar(50)" json:"llm_provider,omitempty"`
+	LLMModel              string     `gorm:"type:varchar(100)" json:"llm_model,omitempty"`
+	LLMBaseURL            string     `gorm:"type:text" json:"llm_base_url,omitempty"`
 	CompletedAt           *time.Time `json:"completed_at,omitempty"`
 	ProcessingTimeSeconds float64    `json:"processing_time_seconds,omitempty"`
 	Error                 string     `gorm:"type:text" json:"error,omitempty"`

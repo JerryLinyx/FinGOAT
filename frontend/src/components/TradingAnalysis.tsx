@@ -5,9 +5,12 @@ import '../TradingAnalysis.css'
 
 interface TradingAnalysisProps {
     onSessionExpired?: () => void
+    llmProvider: string
+    llmModel: string
+    llmBaseUrl?: string
 }
 
-export function TradingAnalysis({ onSessionExpired }: TradingAnalysisProps) {
+export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl }: TradingAnalysisProps) {
     const [ticker, setTicker] = useState('')
     const [date, setDate] = useState(() => {
         const today = new Date()
@@ -60,7 +63,13 @@ export function TradingAnalysis({ onSessionExpired }: TradingAnalysisProps) {
 
         try {
             // Submit analysis request
-            const task = await tradingService.requestAnalysis(ticker.trim(), date)
+            const llmConfig = {
+                provider: llmProvider,
+                base_url: llmBaseUrl || undefined,
+                quick_think_llm: llmModel,
+                deep_think_llm: llmModel,
+            }
+            const task = await tradingService.requestAnalysis(ticker.trim(), date, llmConfig)
             setCurrentTask(task)
 
             // Start polling for results
@@ -69,8 +78,8 @@ export function TradingAnalysis({ onSessionExpired }: TradingAnalysisProps) {
                 (updatedTask) => {
                     setCurrentTask(updatedTask)
                 },
-                60, // max 60 attempts
-                10000 // poll every 10 seconds
+                120, // allow longer-running jobs (up to ~16 minutes with 8s interval)
+                8000 // poll every 8 seconds
             )
 
             // Reload previous analyses
@@ -257,7 +266,14 @@ export function TradingAnalysis({ onSessionExpired }: TradingAnalysisProps) {
                                         <span>{formatConfidence(task.decision.confidence)}</span>
                                     </div>
                                 )}
-                                <div className="item-date">{new Date(task.CreatedAt).toLocaleString()}</div>
+                                <div className="item-meta-row">
+                                    <span className="item-date">{new Date(task.CreatedAt).toLocaleString()}</span>
+                                    {task.llm_provider && (
+                                        <span className="item-provider">
+                                            {task.llm_provider}{task.llm_model ? ` / ${task.llm_model}` : ''}
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         ))}
                     </div>

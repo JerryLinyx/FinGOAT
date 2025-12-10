@@ -126,12 +126,6 @@ const NOTIFICATION_CHANNELS = [
   { label: 'Major Market Alerts', enabled: true },
 ] as const
 
-const AGENT_MODELS = [
-  { label: 'FinGOAT-7B (Default)', value: 'FinGOAT-7B' },
-  { label: 'FinGOAT-13B', value: 'FinGOAT-13B' },
-  { label: 'FinGOAT-Enterprise', value: 'FinGOAT-Enterprise' },
-] as const
-
 const RISK_LABELS = ['Conservative', 'Moderate', 'Aggressive'] as const
 
 const getStoredTheme = (): Theme => {
@@ -154,7 +148,6 @@ function App() {
   const [articles, setArticles] = useState<Article[]>([])
   const [articlesLoading, setArticlesLoading] = useState(false)
   const [articlesError, setArticlesError] = useState('')
-  const [selectedModel, setSelectedModel] = useState<string>(AGENT_MODELS[0].value)
   const [riskTolerance, setRiskTolerance] = useState(1)
   const [dataSources, setDataSources] = useState<Record<string, boolean>>(() =>
     DATA_SOURCES.reduce(
@@ -177,6 +170,9 @@ function App() {
   const [expandedArticles, setExpandedArticles] = useState<Record<number, boolean>>({})
   const [articleLikes, setArticleLikes] = useState<Record<number, number>>({})
   const [likingArticle, setLikingArticle] = useState<Record<number, boolean>>({})
+  const [llmProvider, setLlmProvider] = useState('openai')
+  const [llmModel, setLlmModel] = useState('gpt-4o-mini')
+  const [llmBaseUrl, setLlmBaseUrl] = useState('https://api.openai.com/v1')
 
   useEffect(() => {
     localStorage.setItem('fingoat_theme', theme)
@@ -213,10 +209,6 @@ function App() {
       ...prev,
       [label]: !prev[label],
     }))
-  }
-
-  const handleModelChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    setSelectedModel(event.target.value)
   }
 
   const handleRiskChange = (event: ChangeEvent<HTMLInputElement>) => {
@@ -491,6 +483,48 @@ function App() {
 
   const riskTone = RISK_LABELS[riskTolerance] ?? 'Moderate'
 
+  const MODEL_PRESETS: Record<string, string[]> = {
+    openai: ['gpt-4o-mini', 'gpt-4o'],
+    anthropic: ['claude-3-haiku-20240307', 'claude-3-5-sonnet-latest'],
+    google: ['gemini-1.5-flash', 'gemini-1.5-pro'],
+    deepseek: ['deepseek-chat'],
+    aliyun: ['deepseek-v3.2', 'glm-4.6', 'Moonshot-Kimi-K2-Instruct', 'qwen3-vl-32b-thinking'],
+    'openai-compatible': ['gpt-4o-mini'],
+    vllm: ['gpt-4o-mini'],
+    ollama: ['llama3.1', 'qwen2.5'],
+  }
+
+  const BASE_DEFAULTS: Record<string, string> = {
+    openai: 'https://api.openai.com/v1',
+    deepseek: 'https://api.deepseek.com/v1',
+    aliyun: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    'openai-compatible': 'http://localhost:8009/v1',
+    vllm: 'http://localhost:8009/v1',
+    ollama: 'http://localhost:11434',
+  }
+
+  const handleLlmProviderChange = (e: ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value
+    setLlmProvider(value)
+    const presets = MODEL_PRESETS[value] || []
+    if (presets.length > 0) {
+      setLlmModel(presets[0])
+    }
+    if (BASE_DEFAULTS[value]) {
+      setLlmBaseUrl(BASE_DEFAULTS[value])
+    } else {
+      setLlmBaseUrl('')
+    }
+  }
+
+  const handleLlmModelChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setLlmModel(e.target.value)
+  }
+
+  const handleLlmBaseUrlChange = (e: ChangeEvent<HTMLInputElement>) => {
+    setLlmBaseUrl(e.target.value)
+  }
+
   const formatTimestamp = (value?: string) => {
     if (!value) return 'Moments ago'
     const date = new Date(value)
@@ -553,16 +587,69 @@ function App() {
           <div className="panel-body scrollable">
             <div className="config-group">
               <label className="config-label" htmlFor="ai-model">
-                AI Model
+                LLM Provider
               </label>
-              <select id="ai-model" value={selectedModel} onChange={handleModelChange}>
-                {AGENT_MODELS.map((model) => (
-                  <option key={model.value} value={model.value}>
-                    {model.label}
-                  </option>
-                ))}
+              <select id="ai-model" value={llmProvider} onChange={handleLlmProviderChange}>
+                <option value="openai">OpenAI</option>
+                <option value="anthropic">Anthropic</option>
+                <option value="google">Gemini</option>
+                <option value="deepseek">DeepSeek (OpenAI compatible)</option>
+                <option value="aliyun">Aliyun DashScope</option>
+                <option value="openai-compatible">OpenAI-compatible (custom)</option>
+                <option value="vllm">vLLM (local)</option>
+                <option value="ollama">Ollama (local)</option>
               </select>
             </div>
+
+            <div className="config-group">
+              <label className="config-label" htmlFor="llm-model">
+                LLM Model
+              </label>
+              <div className="model-row">
+                <select
+                  id="llm-model-presets"
+                  value={MODEL_PRESETS[llmProvider]?.includes(llmModel) ? llmModel : 'custom'}
+                  onChange={(e) => {
+                    const val = e.target.value
+                    if (val === 'custom') return
+                    setLlmModel(val)
+                  }}
+                >
+                  {(MODEL_PRESETS[llmProvider] || []).map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                  <option value="custom">Custom…</option>
+                </select>
+                <input
+                  id="llm-model"
+                  type="text"
+                  value={llmModel}
+                  onChange={handleLlmModelChange}
+                  placeholder="e.g., gpt-4o-mini / deepseek-v3.2 / glm-4.6 / Moonshot-Kimi-K2-Instruct / qwen3-vl-32b-thinking"
+                />
+              </div>
+            </div>
+
+            {(llmProvider === 'deepseek' ||
+              llmProvider === 'aliyun' ||
+              llmProvider === 'openai-compatible' ||
+              llmProvider === 'vllm' ||
+              llmProvider === 'ollama') && (
+                <div className="config-group">
+                  <label className="config-label" htmlFor="llm-baseurl">
+                    Base URL
+                  </label>
+                  <input
+                    id="llm-baseurl"
+                    type="text"
+                    value={llmBaseUrl}
+                    onChange={handleLlmBaseUrlChange}
+                    placeholder="https://api.deepseek.com"
+                  />
+                </div>
+              )}
 
             <div className="config-group">
               <div className="config-label-row">
@@ -631,7 +718,7 @@ function App() {
             </div>
 
             <div className="config-note">
-              Operating in <strong>{riskTone}</strong> mode with <strong>{selectedModel}</strong>.
+              Operating in <strong>{riskTone}</strong> mode using <strong>{llmProvider}</strong> / <strong>{llmModel}</strong>.
             </div>
 
             <div className="config-actions">
@@ -658,7 +745,12 @@ function App() {
           </div>
 
           <div className="panel-body scrollable">
-            <TradingAnalysis onSessionExpired={resetSession} />
+            <TradingAnalysis
+              onSessionExpired={resetSession}
+              llmProvider={llmProvider}
+              llmModel={llmModel}
+              llmBaseUrl={llmBaseUrl}
+            />
           </div>
         </section>
 

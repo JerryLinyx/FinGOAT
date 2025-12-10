@@ -20,8 +20,9 @@ var tradingHTTPClient = &http.Client{Timeout: 15 * time.Second}
 
 // Request/Response structures for Python service
 type AnalysisRequest struct {
-	Ticker string `json:"ticker" binding:"required"`
-	Date   string `json:"date" binding:"required"`
+	Ticker    string                 `json:"ticker" binding:"required"`
+	Date      string                 `json:"date" binding:"required"`
+	LLMConfig map[string]interface{} `json:"llm_config,omitempty"`
 }
 
 type PythonServiceResponse struct {
@@ -79,6 +80,25 @@ func RequestAnalysis(c *gin.Context) {
 		return
 	}
 
+	getStr := func(key string) string {
+		if req.LLMConfig == nil {
+			return ""
+		}
+		if v, ok := req.LLMConfig[key]; ok {
+			if s, ok := v.(string); ok {
+				return s
+			}
+		}
+		return ""
+	}
+
+	llmProvider := getStr("provider")
+	llmModel := getStr("quick_think_llm")
+	if llmModel == "" {
+		llmModel = getStr("deep_think_llm")
+	}
+	llmBaseURL := getStr("base_url")
+
 	// Get user ID from JWT context
 	userID, exists := c.Get("user_id")
 	if !exists {
@@ -127,6 +147,9 @@ func RequestAnalysis(c *gin.Context) {
 		Ticker:       req.Ticker,
 		AnalysisDate: req.Date,
 		Status:       pythonResp.Status,
+		LLMProvider:  llmProvider,
+		LLMModel:     llmModel,
+		LLMBaseURL:   llmBaseURL,
 	}
 
 	if err := global.DB.Create(&task).Error; err != nil {

@@ -6,6 +6,12 @@ const TOKEN_STORAGE_KEY = 'fingoat_token'
 export interface AnalysisRequest {
     ticker: string
     date: string
+    llm_config?: {
+        provider?: string
+        base_url?: string
+        deep_think_llm?: string
+        quick_think_llm?: string
+    }
 }
 
 export interface TradingDecision {
@@ -27,6 +33,9 @@ export interface AnalysisTask {
     error?: string
     completed_at?: string
     processing_time_seconds?: number
+    llm_provider?: string
+    llm_model?: string
+    llm_base_url?: string
     CreatedAt: string
     UpdatedAt: string
 }
@@ -52,11 +61,11 @@ class TradingService {
         }
     }
 
-    async requestAnalysis(ticker: string, date: string): Promise<AnalysisTask> {
+    async requestAnalysis(ticker: string, date: string, llmConfig?: AnalysisRequest['llm_config']): Promise<AnalysisTask> {
         const response = await fetch(`${API_BASE_URL}/api/trading/analyze`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
-            body: JSON.stringify({ ticker, date }),
+            body: JSON.stringify({ ticker, date, llm_config: llmConfig }),
         })
 
         if (!response.ok) {
