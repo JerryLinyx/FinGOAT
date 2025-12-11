@@ -25,8 +25,9 @@ sys.path.insert(0, TRADING_AGENTS_PATH)
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.default_config import DEFAULT_CONFIG
 
-# Load environment variables
-load_dotenv()
+# Load environment variables from .env.trading (or .env if .env.trading doesn't exist)
+env_file = ".env.trading" if os.path.exists(".env.trading") else ".env"
+load_dotenv(dotenv_path=env_file)
 
 # Configure logging
 logging.basicConfig(
@@ -34,6 +35,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
+logger.info(f"Loading environment variables from: {env_file}")
 
 # Initialize FastAPI app
 app = FastAPI(

@@ -1,0 +1,34 @@
+Title: Earnings Quality Indicators
+Type: financial_concepts
+Date: 2024-01-01
+Source: finance_knowledge_base
+Ticker: GENERAL
+================================================================================
+
+Earnings Quality Indicators
+
+High-Quality Earnings Signs:
+1. Consistent revenue growth over multiple quarters
+2. Operating cash flow exceeds net income
+3. Gross margins stable or improving
+4. Low reliance on one-time gains or accounting adjustments
+5. Accounts receivable growth in line with revenue growth
+6. Inventory turnover consistent or improving
+7. Low debt levels with manageable interest coverage
+8. Transparent financial reporting with minimal restatements
+
+Low-Quality Earnings Warning Signs:
+1. Net income growing but operating cash flow declining
+2. Large one-time charges or gains
+3. Aggressive revenue recognition practices
+4. Accounts receivable growing much faster than revenue
+5. Inventory buildup without corresponding sales growth
+6. Frequent use of non-GAAP adjustments
+7. Related-party transactions that may inflate revenue
+8. Changes in accounting methods that boost earnings
+
+Key Ratios for Earnings Quality:
+- Cash Flow from Operations / Net Income: Should be consistently > 1.0
+- Days Sales Outstanding (DSO): Should be stable or decreasing
+- Inventory Days: Should be stable or decreasing
+- Accruals Ratio: (Net Income - Operating Cash Flow) / Total Assets (lower is better)

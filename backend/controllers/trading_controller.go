@@ -24,7 +24,11 @@ var tradingServiceURL = func() string {
 	return defaultTradingServiceURL
 }()
 
-var tradingHTTPClient = &http.Client{Timeout: 15 * time.Second}
+// Trading analysis can take several minutes, so we use a longer timeout
+// For analysis requests (GET /api/v1/analysis/:id), we use 5 minutes
+// For initial submission (POST /api/v1/analyze), we use 30 seconds
+var tradingHTTPClient = &http.Client{Timeout: 30 * time.Second}
+var tradingHTTPClientLongTimeout = &http.Client{Timeout: 5 * time.Minute}
 
 // Request/Response structures for Python service
 type AnalysisRequest struct {
@@ -189,8 +193,9 @@ func GetAnalysisResult(c *gin.Context) {
 	}
 
 	// If task is still processing, fetch latest status from Python service
+	// Use longer timeout for analysis status checks as they can take time
 	if task.Status == "pending" || task.Status == "processing" {
-		resp, err := tradingHTTPClient.Get(tradingServiceURL + "/api/v1/analysis/" + taskID)
+		resp, err := tradingHTTPClientLongTimeout.Get(tradingServiceURL + "/api/v1/analysis/" + taskID)
 		if err != nil {
 			task.Status = "failed"
 			task.Error = "failed to reach trading service: " + err.Error()

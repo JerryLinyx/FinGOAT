@@ -1,0 +1,44 @@
+Title: Company Valuation Methods
+Type: valuation_methods
+Date: 2024-01-01
+Source: finance_knowledge_base
+Ticker: GENERAL
+================================================================================
+
+Company Valuation Methods
+
+1. Discounted Cash Flow (DCF) Analysis:
+   - Project future free cash flows
+   - Apply discount rate (WACC: Weighted Average Cost of Capital)
+   - Calculate terminal value
+   - Sum present values
+   - Key assumptions: growth rates, discount rate, terminal multiple
+
+2. Comparable Company Analysis (Comps):
+   - Find similar companies in same industry
+   - Calculate valuation multiples (P/E, EV/EBITDA, P/S)
+   - Apply median or mean multiples to target company
+   - Adjust for differences in growth, margins, risk
+
+3. Precedent Transactions:
+   - Analyze recent M&A transactions in industry
+   - Calculate transaction multiples
+   - Apply to target company
+   - Often includes control premium (20-40%)
+
+4. Asset-Based Valuation:
+   - Sum of all assets minus liabilities
+   - Useful for asset-heavy businesses
+   - May not capture intangible value
+
+5. Key Valuation Multiples:
+   - P/E Ratio: For profitable companies
+   - EV/EBITDA: Better for companies with different capital structures
+   - P/S Ratio: For companies without earnings
+   - P/B Ratio: For asset-heavy companies
+   - PEG Ratio: P/E / Growth Rate (lower is better, < 1.0 is attractive)
+
+6. Growth-Adjusted Metrics:
+   - PEG Ratio: P/E divided by growth rate
+   - EV/Revenue Growth: Enterprise Value / Revenue Growth Rate
+   - Rule of 40 (SaaS): Revenue Growth % + Profit Margin % should be > 40%

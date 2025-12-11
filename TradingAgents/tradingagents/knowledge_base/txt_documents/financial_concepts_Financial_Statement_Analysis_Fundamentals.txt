@@ -1,0 +1,43 @@
+Title: Financial Statement Analysis Fundamentals
+Type: financial_concepts
+Date: 2024-01-01
+Source: finance_knowledge_base
+Ticker: GENERAL
+================================================================================
+
+Financial Statement Analysis Fundamentals
+
+1. Balance Sheet Analysis:
+   - Current Ratio: Current Assets / Current Liabilities (ideal: > 1.5)
+   - Quick Ratio: (Current Assets - Inventory) / Current Liabilities (ideal: > 1.0)
+   - Debt-to-Equity Ratio: Total Debt / Total Equity (ideal: < 0.5 for conservative companies)
+   - Working Capital: Current Assets - Current Liabilities (positive is good)
+
+2. Income Statement Analysis:
+   - Gross Profit Margin: (Revenue - COGS) / Revenue (higher is better)
+   - Operating Margin: Operating Income / Revenue (shows operational efficiency)
+   - Net Profit Margin: Net Income / Revenue (overall profitability)
+   - Earnings Per Share (EPS): Net Income / Shares Outstanding
+   - Revenue Growth Rate: (Current Revenue - Previous Revenue) / Previous Revenue
+
+3. Cash Flow Statement Analysis:
+   - Operating Cash Flow: Should be positive and growing
+   - Free Cash Flow: Operating Cash Flow - Capital Expenditures
+   - Cash Flow from Operations / Net Income: Should be > 1.0 (indicates quality earnings)
+   - Cash Conversion Cycle: Days Inventory + Days Receivable - Days Payable (lower is better)
+
+4. Key Valuation Metrics:
+   - Price-to-Earnings (P/E) Ratio: Stock Price / EPS (compare to industry average)
+   - Price-to-Book (P/B) Ratio: Market Cap / Book Value (lower may indicate undervaluation)
+   - Price-to-Sales (P/S) Ratio: Market Cap / Revenue
+   - Enterprise Value (EV): Market Cap + Debt - Cash
+   - EV/EBITDA: Enterprise Value / EBITDA (lower may indicate better value)
+
+5. Red Flags to Watch:
+   - Declining revenue growth
+   - Increasing debt levels
+   - Negative free cash flow
+   - Declining profit margins
+   - High inventory levels relative to sales
+   - Accounts receivable growing faster than revenue
+   - Frequent accounting restatements

@@ -1,0 +1,47 @@
+Title: Financial Risk Assessment Framework
+Type: risk_analysis
+Date: 2024-01-01
+Source: finance_knowledge_base
+Ticker: GENERAL
+================================================================================
+
+Financial Risk Assessment Framework
+
+1. Credit Risk Indicators:
+   - Interest Coverage Ratio: EBIT / Interest Expense (should be > 3x)
+   - Debt-to-Equity Ratio: Total Debt / Total Equity
+   - Current Ratio: Current Assets / Current Liabilities
+   - Quick Ratio: (Current Assets - Inventory) / Current Liabilities
+   - Altman Z-Score: Bankruptcy prediction model
+
+2. Liquidity Risk:
+   - Current Ratio: < 1.0 indicates potential liquidity issues
+   - Quick Ratio: < 0.5 is concerning
+   - Cash Ratio: Cash / Current Liabilities
+   - Operating Cash Flow / Current Liabilities: Should be > 1.0
+
+3. Operational Risk:
+   - Revenue concentration: > 20% from one customer is risky
+   - Geographic concentration: Over-reliance on one market
+   - Product concentration: Single product dependency
+   - Key person risk: Dependence on founder/CEO
+
+4. Market Risk:
+   - Beta: Stock volatility vs market (1.0 = market average)
+   - Correlation with market indices
+   - Sector-specific risks (regulatory, cyclical)
+
+5. Financial Statement Red Flags:
+   - Revenue recognition changes
+   - Frequent restatements
+   - Auditor changes
+   - Related-party transactions
+   - Off-balance sheet liabilities
+   - Unusual accounting practices
+
+6. Quality of Earnings Checklist:
+   - Operating cash flow > net income
+   - Consistent accounting policies
+   - Transparent disclosures
+   - Realistic growth assumptions
+   - Sustainable business model

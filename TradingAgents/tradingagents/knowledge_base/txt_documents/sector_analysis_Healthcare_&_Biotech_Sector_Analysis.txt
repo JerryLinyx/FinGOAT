@@ -1,0 +1,34 @@
+Title: Healthcare & Biotech Sector Analysis
+Type: sector_analysis
+Date: 2024-01-01
+Source: finance_knowledge_base
+Ticker: GENERAL
+================================================================================
+
+Healthcare & Biotech Sector Analysis
+
+Key Metrics for Healthcare Companies:
+1. Revenue Growth: Established pharma: 3-8%, Biotech: highly variable based on pipeline
+2. Gross Margins: Pharma: 70-85%, Biotech: variable, often negative pre-commercialization
+3. R&D as % of Revenue: Pharma: 15-25%, Biotech: 50-100%+ (pre-revenue)
+4. Operating Margins: Mature pharma: 20-35%, Biotech: negative until commercialization
+
+Pipeline Analysis (Biotech):
+- Phase 1 success rate: ~63%
+- Phase 2 success rate: ~31%
+- Phase 3 success rate: ~58%
+- FDA approval rate: ~85% of Phase 3 submissions
+- Time to market: 10-15 years from discovery
+
+Key Healthcare Ratios:
+- P/E Ratios: Mature pharma: 12-20x, Biotech: often N/A (no earnings)
+- Price-to-Sales: Biotech: 5-20x (pre-revenue), Mature: 3-6x
+- R&D Efficiency: Revenue per R&D dollar spent
+
+Healthcare Sector Considerations:
+- Regulatory approval risks (FDA, EMA)
+- Patent expiration (patent cliff)
+- Generic competition
+- Reimbursement changes
+- Clinical trial outcomes
+- Pipeline depth and quality
