@@ -353,7 +353,7 @@ We welcome contributions!
 If you use FinGOAT in your research, please cite:
 
 ```bibtex
-@software{fingoat2024,
+@software{fingoat2025,
   title = {FinGOAT: Financial Graph-Orchestrated Agentic Trading},
   author = {Lin, Yuxuan and Qian, Gaolin and Gadde, Akhil},
   year = {2025},

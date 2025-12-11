@@ -353,7 +353,7 @@ NVDA 的示例输出：
 如果您在研究中使用 FinGOAT，请引用：
 
 ```bibtex
-@software{fingoat2024,
+@software{fingoat2025,
   title = {FinGOAT: Financial Graph-Orchestrated Agentic Trading},
   author = {Lin, Yuxuan and Qian, Gaolin and Gadde, Akhil},
   year = {2025},
