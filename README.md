@@ -1,27 +1,37 @@
 # FinGOAT: Financial Graph-Orchestrated Agentic Trading
 
-[English](./README.md) | [中文](./README-CN.md)
+[English](./README.md) | [中文](./README-CN.md) 
 
 **Demo Video**: [YouTube](https://youtu.be/f5eHl32v5gU)
 
+
+FinGOAT is a full-stack financial intelligence system that combines real-time data ingestion, graph-structured knowledge modeling, and agentic decision workflows.
+The stack includes a Go backend (Gin + GORM + PostgreSQL + Redis), a Python backend (FastAPI + LangChain + LangGraph) and a TypeScript/React frontend built with Vite.
+
+
+![](assets/infra.png)
+
+
+
+## Contributors
 | UNI | GitHub | Branch | Focus / Tasks |
 |-------|--------|--------|---------------|
 | yl6061| <a href="https://github.com/JerryLinyx"><img src="https://github.com/JerryLinyx.png?size=60" alt="JerryLinyx avatar" width="36"/></a> [JerryLinyx](https://github.com/JerryLinyx) | `main` | - Python Backend<br>- Go Backend<br>- PostgreSQL DB<br>- Redis<br>- Docker Compose<br>- GCP VM Deployment<br>- Multi-Models Support<br>- Ollama Local Inference<br>- RSS Feeds<br>- Frontend |
 | gq2142| <a href="https://github.com/codewith-lab"><img src="https://github.com/codewith-lab.png?size=60" alt="codewith-lab avatar" width="36"/></a> [codewith-lab](https://github.com/codewith-lab) | `dev_gq2142` | - Multi-agents Async-Execution<br>- Enhanced Prompt Engineering<br>- Investment Workflow Redesign<br>- MCP on Quantitative & Factor-Based Scoring<br>- Decision Transparency<br>- Frontend |
 | ag4969| <a href="https://github.com/akhilg24"><img src="https://github.com/akhilg24.png?size=60" alt="akhilg24 avatar" width="36"/></a> [akhilg24](https://github.com/akhilg24) | `rag_fund` | - RAG for Fundamentals Agent<br>- Vector DB |
 
-FinGOAT is a full-stack financial intelligence system that combines real-time data ingestion, graph-structured knowledge modeling, and agentic decision workflows.
-The stack includes a Go backend (Gin + GORM + PostgreSQL + Redis) and a TypeScript/React frontend built with Vite.
-
-![](assets/infra.png)
 
 
-**Tribute to the Original Project:**
+
+
+
+## Tribute to the Original Project:
 
 Thanks to the [Tauric Research](https://github.com/TauricResearch) team for their multi-agent trading framework [TradingAgents](https://github.com/TauricResearch/TradingAgents)!
 
 ## Deployment
-- Full guide: [DEPLOYMENT.md](./DEPLOYMENT.md)
+Here is tutorial on how to deploy this on GCP. However, it is highly recommended to try section `Getting Started` first on your device.
+- Deployment guide: [DEPLOYMENT.md](./DEPLOYMENT.md)
 - Chinese version: [DEPLOYMENT-CN.md](./DEPLOYMENT-CN.md)
 
 ## Getting Started
