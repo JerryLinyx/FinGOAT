@@ -36,7 +36,7 @@ This branch focuses on agent layer optimization and UI transparency
 ## UI Transparency
 
 - Real Time Status Tracking
-- Detailed Breakdown of factors and risks 
+- Detailed Breakdown of Factors and Risks 
 
 <img width="818" height="442" alt="Screenshot 2025-12-14 at 1 35 19 AM" src="https://github.com/user-attachments/assets/322eade8-520b-41b6-808c-32eb2799d9ed" />
 <img width="818" height="442" alt="Screenshot 2025-12-14 at 1 35 43 AM" src="https://github.com/user-attachments/assets/d70d76fe-61a3-4b3b-9e69-a14cba6b2978" />
