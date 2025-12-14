@@ -9,7 +9,8 @@ FinGOAT 是一个全栈金融智能系统，融合了实时数据采集、图结
 
 ![](assets/infra.png)
 
-**致敬源项目**
+**致敬源项目：**
+
 感谢 [Tauric Research](https://github.com/TauricResearch) 团队的多智能体交易框架 [TradingAgents](https://github.com/TauricResearch/TradingAgents)！
 
 ## 快速开始
@@ -282,6 +283,8 @@ NVDA 的示例输出：
 - API 密钥和凭证的秘密管理
 
 ## 模型库
+
+![](./assets/zoo.jpg)
 
 ### 支持的 LLM 提供商
 
