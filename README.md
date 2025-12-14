@@ -1,162 +1,47 @@
-# FinGOAT: Financial Graph-Orchestrated Agentic Trading
+This branch focuses on agent layer optimization and UI transparency 
 
-[English](./README.md) | [中文](./README-CN.md)
-
-FinGOAT is a full-stack financial intelligence system that combines real-time data ingestion, graph-structured knowledge modeling, and agentic decision workflows.
-The stack includes a Go backend (Gin + GORM + PostgreSQL + Redis) and a TypeScript/React frontend built with Vite.
-
-## Getting Started
-
-### Quick Start
-
-```bash
-git clone https://github.com/JerryLinyx/FinGOAT.git
-cd FinGOAT
-git submodule update --init --recursive
-```
-
-### Backend Setup (Gin+GORM+PostgreSQL+Redis+Viper+JWT+Docker)
-
-#### Install dependencies
-```bash
-go mod init github.com/JerryLinyx/FinGOAT
-
-go get -u github.com/gin-gonic/gin
-go get github.com/spf13/viper
-go get -u gorm.io/gorm
-go get -u gorm.io/driver/postgres
-go get -u google.golang.org/grpc
-go get -u golang.org/x/crypto/bcrypt
-go get github.com/golang-jwt/jwt/v5
-go get -u github.com/go-redis/redis/v8
-go get github.com/gin-contrib/cors
-
-go mod tidy
-```
-
-#### Start PostgreSQL
-```bash
-docker pull postgres:15.14-alpine3.21
-
-docker run --name fingoat-pg \
-  --restart=unless-stopped \
-  -d -p 5432:5432 \
-  -v pgdata:/var/lib/postgresql/data \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=2233 \
-  -e POSTGRES_DB=fingoat_db \
-  postgres:15.14-alpine3.21
-```
-#### Start Redis
-```bash
-docker run -d \
-  --name fingoat-redis \
-  -p 6379:6379 \
-  -v redisdata:/data \
-  redis:7.2
-```
-### Frontend Setup (TypeScript+Vite+React)
-```bash
-npm create vite@latest frontend
-
-cd frontend
-npm run build
-npm run dev
-```
-
-### Agents Setup (LangChain+LangGraph+FastAPI)
-
-1) Create Python env and install deps
-```bash
-cd langchain-v1
-python3 -m venv .venv
-source .venv/bin/activate
-
-# if needed
-conda deactivate
-
-pip install --upgrade pip
-pip install -r requirements.txt
-```
-
-2) Configure API keys and service settings
-```bash
-cp .env.trading .env
-# set OPENAI_API_KEY and ALPHA_VANTAGE_API_KEY (Or other apis)
-# adjust TRADING_SERVICE_PORT / CORS_ORIGINS if needed
-```
-
-3) Run the FastAPI microservice
-```bash
-# dev mode (auto reload logs to console)
-python trading_service.py
-
-# production-style
-uvicorn trading_service:app --host 0.0.0.0 --port 8001 --workers 4
-```
-Service docs live at http://localhost:8001/docs and health at `/health`.
-
-4) Sample request to trigger analysis
-```bash
-curl -X POST http://localhost:8001/api/v1/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-        "ticker": "NVDA",
-        "date": "2024-05-10",
-        "llm_config": {
-          "deep_think_llm": "gpt-4o-mini",
-          "quick_think_llm": "gpt-4o-mini",
-          "max_debate_rounds": 1
-        }
-      }'
-```
-The response returns a `task_id`; poll `/api/v1/analysis/{task_id}` for the result.
-
-#### Screenshots
-
-<img width="900" height="500" alt="image" src="https://github.com/user-attachments/assets/4dc3f039-051a-4510-a44f-7d33c38d4400" />
+## Problems
+- Limited transparency
+  - Multi-stage interactions, ambiguous reasoning, inconsistent agent opinions
+- High latency
+  - Multi-turn sequential execution
+- Unstable outcomes
+  - “All agents must converge” (debate mechanism) is unrealistic
 
 
-<img width="900" height="500" alt="image" src="https://github.com/user-attachments/assets/db30f088-b0e0-41a2-a079-688490ae1c42" />
+## Multi-Agent Layer 
 
+### Key Improvements
+- Asynchronous Analyst Execution
+  -  Exploit I/O-boundedness of external API calls (e.g., market data/news endpoints) using async concurrency to overlap network latency and improve throughput
+  -  Note: this primarily provides concurrency, not CPU parallelism; due to CPython’s GIL, CPU-bound workloads still require multiprocessing or native/GPU kernels for true parallel speedups
+- Richer Set of Analyst Agents
+  - Valulation Agent for Intrinstic Value Estimation 
+- Enhanced Prompt Engineering
+  - CoF + Self-Reflective  
+- Streamlined, CFA-Consistent Investment Workflow
+- Adoption of a Quantitative and Factor-Based Scoring
 
-## FinGOAT Functional TODO List
+### New Architecture (CFA-Consistent)
+<img width="674" height="276" alt="Screenshot 2025-12-14 at 1 20 13 AM" src="https://github.com/user-attachments/assets/5d68852b-6fd2-47f2-92db-98a829efe4b9" />
 
-| Name | Task | Status |
-|------|------|---------|
-| PostgreSQL & Redis Containers | Database and cache services via Docker | ✅ Completed |
-| Go Backend Scaffold | Gin + GORM + Viper basic setup | ✅ Completed |
-| React Frontend Scaffold | Vite + TypeScript project initialized | ✅ Completed |
-| Environment Config | `.env` and Viper-based configuration management | ✅ Completed |
-| Authentication Layer | JWT-based auth with Casbin RBAC integration | ⚙️ In Progress |
-| API Structure | REST/gRPC routing, middleware, error handling | ⚙️ In Progress |
-| Message Queue | Implement Redis Stream for event publishing/subscription | ⚙️ In Progress  |
-| Schema Design | Define tables for users, assets, signals, portfolios, and events | ⚙️ In Progress  |
-| Data Access Layer | Repositories for CRUD operations via GORM | ⚙️ In Progress |
-| Logging & Monitoring | Basic structured logging, extendable to OpenTelemetry | ☐ Pending |
-| MCP Core | Event dispatcher coordinating Fundamental, Macro, Quant agents | ☐ Pending |
-| Fundamental Agent | Parse earnings, balance sheets, and valuation metrics | ☐ Pending |
-| Macro Agent | Analyze macroeconomic variables and policy signals | ☐ Pending |
-| Quant Agent | Compute statistical and sentiment-based indicators | ☐ Pending |
-| Agent Aggregator | Combine multi-agent results via confidence/voting | ☐ Pending |
-| Prompt Templates | Define meta-prompts for agent coordination and reasoning | ☐ Pending |
-| Evaluation Logger | Store agent outputs and prompt-response pairs for analysis | ☐ Pending |
-| MVO Optimizer | Implement mean–variance optimization (µᵀw − λwᵀΣw) | ☐ Pending |
-| Risk Personalization | Adjustable risk aversion parameter per user | ☐ Pending |
-| Backtesting Engine | Simulate rebalancing and evaluate portfolio performance | ☐ Pending |
-| Transaction Cost Model | (Future) include slippage and cost in optimization | ☐ Future Feature |
-| Event Source Detection | Detect volatility spikes, macro news, and user-defined triggers | ☐ Pending |
-| Event Dispatch | Push events through Redis Stream to MCP and agents | ☐ Pending |
-| Real-Time Stream | WebSocket/SSE to deliver updates to frontend dashboard | ☐ Pending |
-| Auth Pages | Login, register, password reset with backend JWT link | ⚙️ In Progress |
-| Dashboard | Show portfolio summary, agent outputs, and alerts | ☐ Pending |
-| Watchlist | Add/remove stocks and monitor live price updates | ☐ Pending |
-| Portfolio Visualization | Charts for allocation, performance, and risk metrics | ☐ Pending |
-| Agent Rationales UI | Explain reasoning and confidence of each agent | ☐ Pending |
-| Notification Center | Event-driven alerts for rebalancing or market signals | ☐ Pending |
-| Settings Panel | User-configurable watchlists and risk preferences | ☐ Pending |
-| Tracing | OpenTelemetry + Jaeger integration | ☐ Pending |
-| Metrics | Prometheus + Grafana monitoring setup | ☐ Pending |
-| Docker Compose | Unified orchestration for backend, agents, DB, Redis, frontend | ⚙️ In Progress  |
-| CI/CD | GitHub Actions for lint, test, and deploy | ☐ Pending |
-| Security Hardening | Input validation, rate limiting, HTTPS-ready | ⚙️ In Progress |
+### Latency Reduction 
+- 70% total reduction (measured end-to-end)
+- 20% from asynchronous I/O concurrency of analyst agency execution 
+- 50% from agent layer redesign
+<img width="323" height="230" alt="Screenshot 2025-12-14 at 1 29 03 AM" src="https://github.com/user-attachments/assets/906bd2a9-83e1-41e1-8b27-ae0826bd102c" />
+
+###  Quantitative Scoring via MCP Calling
+- PM Engine 
+<img width="392" height="383" alt="Screenshot 2025-12-14 at 1 33 50 AM" src="https://github.com/user-attachments/assets/198c534c-58aa-4c1d-875f-e1435e94e039" />
+
+- Risk Manager
+<img width="428" height="39" alt="Screenshot 2025-12-14 at 1 34 12 AM" src="https://github.com/user-attachments/assets/34fc0522-6905-4c48-abeb-63440c4c73a9" />
+
+## UI Transparency
+
+- Real Time Status Tracking
+- Detailed Breakdown of factors and risks 
+
+<img width="818" height="442" alt="Screenshot 2025-12-14 at 1 35 19 AM" src="https://github.com/user-attachments/assets/322eade8-520b-41b6-808c-32eb2799d9ed" />
+<img width="824" height="438" alt="Screenshot 2025-12-14 at 1 35 43 AM" src="https://github.com/user-attachments/assets/d70d76fe-61a3-4b3b-9e69-a14cba6b2978" />
