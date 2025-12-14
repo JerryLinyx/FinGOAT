@@ -4,11 +4,11 @@
 
 **Demo Video**: [YouTube](https://youtu.be/f5eHl32v5gU)
 
-| Name | Email | GitHub | Branch | Focus / Tasks |
-|------|-------|--------|--------|---------------|
-| Yuxuan Lin | yl6061@columbia.edu | [JerryLinyx](https://github.com/JerryLinyx) | `main` | - Python Backend<br>- Go Backend<br>- PostgreSQL DB<br>- Redis<br>- Docker Compose<br>- GCP VM Deployment<br>- Multi-Models Support<br>- Ollama Local Inference<br>- RSS Feeds<br>- Frontend |
-| Gaolin Qian | gq2142@columbia.edu | [codewith-lab](https://github.com/codewith-lab) | `dev_gq2142` | - Multi-agents Async-Execution<br>- Enhanced Prompt Engineering<br>- Investment Workflow Redesign<br>- MCP on Quantitative & Factor-Based Scoring<br>- Decision Transparency<br>- Frontend |
-| Akhil Gadde | ag4969@columbia.edu | [akhilg24](https://github.com/akhilg24) | `rag_fund` | - RAG for Fundamentals Agent<br>- Vector DB |
+| UNI | GitHub | Branch | Focus / Tasks |
+|-------|--------|--------|---------------|
+| yl6061| <a href="https://github.com/JerryLinyx"><img src="https://github.com/JerryLinyx.png?size=60" alt="JerryLinyx avatar" width="36"/></a> [JerryLinyx](https://github.com/JerryLinyx) | `main` | - Python Backend<br>- Go Backend<br>- PostgreSQL DB<br>- Redis<br>- Docker Compose<br>- GCP VM Deployment<br>- Multi-Models Support<br>- Ollama Local Inference<br>- RSS Feeds<br>- Frontend |
+| gq2142| <a href="https://github.com/codewith-lab"><img src="https://github.com/codewith-lab.png?size=60" alt="codewith-lab avatar" width="36"/></a> [codewith-lab](https://github.com/codewith-lab) | `dev_gq2142` | - Multi-agents Async-Execution<br>- Enhanced Prompt Engineering<br>- Investment Workflow Redesign<br>- MCP on Quantitative & Factor-Based Scoring<br>- Decision Transparency<br>- Frontend |
+| ag4969| <a href="https://github.com/akhilg24"><img src="https://github.com/akhilg24.png?size=60" alt="akhilg24 avatar" width="36"/></a> [akhilg24](https://github.com/akhilg24) | `rag_fund` | - RAG for Fundamentals Agent<br>- Vector DB |
 
 FinGOAT is a full-stack financial intelligence system that combines real-time data ingestion, graph-structured knowledge modeling, and agentic decision workflows.
 The stack includes a Go backend (Gin + GORM + PostgreSQL + Redis) and a TypeScript/React frontend built with Vite.
