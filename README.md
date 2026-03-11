@@ -33,6 +33,7 @@ Thanks to the [Tauric Research](https://github.com/TauricResearch) team for thei
 Here is tutorial on how to deploy this on GCP. However, it is highly recommended to try section `Getting Started` first on your device.
 - Deployment guide: [DEPLOYMENT.md](./DEPLOYMENT.md)
 - Chinese version: [DEPLOYMENT-CN.md](./DEPLOYMENT-CN.md)
+- Project organization map: [PROJECT_ORGANIZATION.md](./PROJECT_ORGANIZATION.md)
 
 ## Getting Started
 

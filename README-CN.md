@@ -16,6 +16,7 @@ FinGOAT 是一个全栈金融智能系统，融合了实时数据采集、图结
 ## 部署
 - 英文部署指南：[DEPLOYMENT.md](./DEPLOYMENT.md)
 - 中文部署指南：[DEPLOYMENT-CN.md](./DEPLOYMENT-CN.md)
+- 项目结构总览：[PROJECT_ORGANIZATION.md](./PROJECT_ORGANIZATION.md)
 
 ## 快速开始
 
