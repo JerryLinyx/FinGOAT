@@ -29,6 +29,8 @@
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
 - [x] Separate worker Redis blocking reads from request Redis timeouts to avoid spurious socket timeout errors
   - Record: `records/2026-03-13-redis-worker-timeout.md`
+- [x] Expose worker liveness and auto-restart a dead trading worker thread
+  - Record: `records/2026-03-13-redis-worker-timeout.md`
 - [x] Make Ollama with `llama3.2` the default provider/model across frontend and service defaults
   - Record: `records/2026-03-13-ollama-default-model.md`
 

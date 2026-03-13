@@ -61,3 +61,43 @@ Status: implemented.
 Remaining gap:
 
 - broader end-to-end provider fidelity still needs its own final close-out after the latest runtime changes
+
+## Additional follow-up: worker liveness and self-healing
+
+Later investigation exposed a separate worker-runtime gap:
+
+- Redis still contained pending analysis payloads
+- the trading service health endpoint still returned `healthy`
+- but the background worker was no longer consuming the queue
+
+This indicated that the FastAPI process could stay alive while the background worker thread had silently stopped.
+
+Implementation follow-up:
+
+- `langchain-v1/trading_service.py`
+  - added `ensure_worker_thread_running()`
+  - startup now delegates worker boot to that helper
+  - `/health` now reports `worker_alive`
+  - `/health` also restarts the worker if it is found dead
+  - `/api/v1/analyze` ensures the worker is running before enqueuing a new task
+
+Validation:
+
+```bash
+python -m py_compile /Users/linyuxuan/workSpace/FinGOAT/langchain-v1/trading_service.py
+```
+
+Live validation after restarting the trading service:
+
+- `/health` returned:
+  - `"worker_alive": true`
+- the previously stuck queue started draining again
+- Redis moved from:
+  - `queue=2, processing=0`
+  to:
+  - `queue=1, processing=1`
+
+Result:
+
+- worker death is now visible
+- common entry points can revive the worker without a full service restart

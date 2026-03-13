@@ -174,6 +174,7 @@ class HealthResponse(BaseModel):
     service: str
     version: str
     timestamp: str
+    worker_alive: bool
 
 
 def utcnow_iso() -> str:
@@ -727,17 +728,24 @@ def analysis_worker_loop() -> None:
                     logger.error("Failed to remove task from processing queue", exc_info=True)
 
 
-@app.on_event("startup")
-def on_startup() -> None:
+def ensure_worker_thread_running() -> bool:
     global worker_thread
 
+    if worker_thread is not None and worker_thread.is_alive():
+        return False
+
+    worker_stop_event.clear()
+    worker_thread = threading.Thread(target=analysis_worker_loop, name="analysis-worker", daemon=True)
+    worker_thread.start()
+    logger.warning("Analysis worker thread was not running and has been restarted")
+    return True
+
+
+@app.on_event("startup")
+def on_startup() -> None:
     get_redis_client()
     get_worker_redis_client()
-
-    if worker_thread is None or not worker_thread.is_alive():
-        worker_stop_event.clear()
-        worker_thread = threading.Thread(target=analysis_worker_loop, name="analysis-worker", daemon=True)
-        worker_thread.start()
+    ensure_worker_thread_running()
 
 
 @app.on_event("shutdown")
@@ -767,16 +775,23 @@ async def health_check() -> HealthResponse:
     except Exception:
         status_value = "degraded"
 
+    restarted = ensure_worker_thread_running()
+    worker_alive = worker_thread is not None and worker_thread.is_alive()
+    if restarted or not worker_alive:
+        status_value = "degraded"
+
     return HealthResponse(
         status=status_value,
         service="tradingagents-service",
         version="1.0.0",
         timestamp=utcnow_iso(),
+        worker_alive=worker_alive,
     )
 
 
 @app.post("/api/v1/analyze", response_model=AnalysisResponse, status_code=status.HTTP_202_ACCEPTED)
 async def analyze_stock(request: AnalysisRequest) -> AnalysisResponse:
+    ensure_worker_thread_running()
     task_state = enqueue_analysis_request(request)
     return AnalysisResponse(**task_state)
 
