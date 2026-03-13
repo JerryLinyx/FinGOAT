@@ -16,3 +16,7 @@ This directory contains the active planning workspace for the current developmen
 - When the version is finalized, archive the snapshot under `../archive/vX.Y.Z/`.
 - Link backlog items to at least one record in `records/` when a topic has non-trivial tradeoffs.
 
+## Active cycle
+
+- Baseline: `v0.1.1`
+- In-progress target: `v0.2.0`

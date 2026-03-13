@@ -2,6 +2,10 @@
 
 ## P0
 
+- [ ] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
+  - Record: `records/2026-03-13-v020-kickoff-requirements.md`
+- [ ] Restrict or deprecate Python public task endpoints (`/api/v1/analyze`, `/api/v1/analysis/{task_id}`) from production exposure
+  - Record: `records/2026-03-13-v020-kickoff-requirements.md`
 - [x] Redesign analysis task state lifecycle
   - Record: `records/2026-03-13-task-state-redesign.md`
 - [x] Define PostgreSQL and Redis boundary for task execution
@@ -36,6 +40,10 @@
 
 ## P1
 
+- [ ] Remove stale frontend dev proxy path `/trading -> :8001` if frontend no longer calls Python APIs directly
+  - Record: `records/2026-03-13-v020-kickoff-requirements.md`
+- [ ] Add boundary regression checks to prevent reintroducing direct frontend->Python or Go->Python analyze-path coupling
+  - Record: `records/2026-03-13-v020-kickoff-requirements.md`
 - [x] Add stage timing and key outputs to the mainline analysis response
   - Record: `records/2026-03-13-stage-timing-and-stage-view.md`
 - [x] Add stage-based frontend analysis view

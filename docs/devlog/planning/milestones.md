@@ -1,13 +1,16 @@
 # Milestones
 
-## Phase 1: Execution Stability
+## Phase 1: Boundary Consolidation and Execution Stability
 
 ### Objective
 
-Stabilize the execution path for analysis tasks.
+Stabilize the execution path and remove API boundary overlap between Go and Python.
 
 ### Deliverables
 
+- Go remains the only external trading API boundary
+- Python trading service is reduced to internal worker/runtime responsibilities
+- Python public task APIs are restricted/deprecated for production path
 - Task state model redesign
 - Redis-backed execution coordination
 - PostgreSQL-backed persistent task truth
@@ -16,6 +19,7 @@ Stabilize the execution path for analysis tasks.
 ### Risks
 
 - Cross-service changes may break current polling flow if rolled out partially.
+- Boundary cleanup may temporarily impact local developer workflows that still call `:8001` directly.
 
 ## Phase 2: Transparency and Observability
 
@@ -64,4 +68,3 @@ Improve decision quality on top of the stabilized system.
 ### Risks
 
 - Quality work can reintroduce complexity if done before boundaries are stable.
-

@@ -1,10 +1,10 @@
 # System Architecture
 
-本文档描述当前系统的分层架构、模块协作关系，以及 v0.2 需要重点收紧的边界。
+本文档描述当前主线架构（基线 `v0.1.1`）以及 `v0.2.0` 的收敛方向。
 
 ## 1. 当前架构总览
 
-当前系统采用“前端 + Go 业务网关 + Python 分析服务 + TradingAgents 引擎 + PostgreSQL/Redis”的组合架构。
+当前系统采用“前端 + Go 业务网关 + Python 运行时 worker + TradingAgents 引擎 + PostgreSQL/Redis”的组合架构。
 
 ### 分层视图
 
@@ -18,89 +18,83 @@
 
 ### 用户分析请求链路
 
-1. 用户在前端提交股票代码和日期
-2. 前端调用 Go backend 的分析接口
-3. Go 校验用户身份并记录任务
-4. Go 调用 Python Trading Service
-5. Python 调用 TradingAgents 图流程
-6. TradingAgents 通过 vendor tools 获取行情、新闻、基本面等数据
-7. Python 汇总结果并返回状态/结果
-8. Go 更新任务和决策
-9. 前端轮询并展示结果
+1. 用户在前端提交股票代码和日期。
+2. 前端调用 Go 的 `/api/trading/*` 接口。
+3. Go 校验用户身份、落库任务、写入 Redis runtime 初始状态并入队。
+4. Python worker 从 Redis 队列消费任务并执行 TradingAgents 图流程。
+5. Python 在执行过程中持续写回 runtime checkpoint（含阶段输出）。
+6. Go 在查询阶段对账 Redis runtime 与 PostgreSQL，终态写回决策与结果。
+7. 前端轮询 Go 并展示进度/阶段输出/最终结果。
 
 ### 文章链路
 
-1. Go 从 RSS/Atom feed 获取数据
-2. 解析并清洗内容
-3. 去重后写入 PostgreSQL
-4. 写入 Redis 缓存
-5. 前端读取展示
+1. Go 从 RSS/Atom feed 获取数据。
+2. 解析并清洗内容。
+3. 去重后写入 PostgreSQL。
+4. 写入 Redis 缓存。
+5. 前端读取展示。
 
 ## 3. 当前边界划分
 
 ### Frontend
 
-- 负责展示和用户交互
-- 不应拥有业务真相
+- 负责展示和用户交互。
+- 不拥有业务真相。
 
 ### Go Backend
 
-- 当前是最适合作为唯一业务 API 入口的层
-- 应拥有持久化和业务状态主导权
+- 当前外部业务 API 主边界。
+- 持有业务持久化与状态语义。
 
 ### Python Trading Service
 
-- 当前更适合被收敛为执行服务
-- 不应长期持有业务任务真相
+- 当前职责是运行时执行服务（queue consumer / worker）。
+- 不应继续扩展为并行外部业务 API 入口。
 
 ### TradingAgents
 
-- 应专注于分析编排和 agent 能力
-- 不应吸收过多产品接口与业务状态职责
+- 专注分析编排、推理流程和工具调用。
+- 不吸收产品 API 与持久化职责。
 
 ## 4. 当前合理之处
 
-- Go 和 Python 分工总体合理
-- TradingAgents 被放在独立引擎层，边界清楚
-- Vendor routing 抽象较好，后续替换供应商成本低
-- PostgreSQL 已经承担了关键业务持久化
+- Go/Python 分层已经从“HTTP 同步调用”收敛到“队列驱动执行”。
+- Redis 已承担任务队列和运行态协调，而非仅缓存。
+- TradingAgents 独立为能力引擎层，便于迭代模型和策略逻辑。
+- 前端已可消费阶段元数据，具备基础可解释性。
 
 ## 5. 当前不合理之处
 
-### 运行态状态边界不清
+### 对外 API 边界仍有历史重叠
 
-- Python 同时是执行器和运行态状态拥有者
+- Go 是主入口，但 Python 仍保留分析任务公共接口，存在双入口遗留。
 
-### Redis 职责设计不足
+### 跨服务契约仍偏弱
 
-- 已引入 Redis，但没有承担核心协调责任
-
-### 分析过程可观测性不足
-
-- 系统能给结果，但不能很好展示“分析过程”
+- 部分响应结构仍是动态 JSON 区域，演进风险较高。
 
 ### 配置层不统一
 
-- 多来源配置叠加，优先级不够明确
+- Go/Python/Docker 多来源配置叠加，优先级治理不足。
 
-## 6. v0.2 目标架构方向
+## 6. v0.2.0 目标架构方向
 
 ### 目标边界
 
-- Frontend：展示和交互
-- Go backend：唯一业务 API 入口 + 业务状态出口
-- Redis：运行态协调层
-- PostgreSQL：持久业务真相源
-- Python Trading Service：执行器 / worker
-- TradingAgents：分析引擎
+- Frontend：展示和交互。
+- Go backend：唯一外部业务 API 入口 + 业务状态出口。
+- Redis：运行态协调层（queue/runtime/checkpoint）。
+- PostgreSQL：持久业务真相源。
+- Python Trading Service：内部执行器 / worker。
+- TradingAgents：分析引擎。
 
 ### 目标收益
 
-- 任务状态可恢复
-- 服务边界更清晰
-- 前后端更容易做透明度展示
-- 后续吸收 RAG、结构化输出、valuation agent 时风险更低
+- 单一外部边界，减少跨服务语义漂移。
+- 任务状态治理更稳，恢复与排障更直接。
+- 前后端契约可收紧并支撑后续质量增强。
+- 吸收 RAG/结构化输出/valuation 能力时风险更可控。
 
 ## 7. 版本判断
 
-当前架构方向是正确的，但 `v0.1.0` 仍处于“原型闭环已形成、服务边界尚未收紧”的阶段。`v0.2.0` 的重点不是增加更多 agent，而是收紧系统边界并把运行模型做稳。
+`v0.1.1` 已具备 MVP 基础骨架。`v0.2.0` 的重点应放在边界收敛、契约收紧、配置治理和回归闭环，而不是继续扩散接口层职责。
