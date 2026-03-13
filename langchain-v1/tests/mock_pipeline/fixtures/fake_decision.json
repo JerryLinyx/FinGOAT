@@ -1,0 +1,20 @@
+{
+  "action": "BUY",
+  "confidence": 0.82,
+  "position_size": 25,
+  "reasoning": {
+    "fundamental_analysis": {
+      "summary": "Fundamentals remain supportive."
+    },
+    "technical_analysis": {
+      "summary": "Trend is improving."
+    },
+    "risk_assessment": {
+      "summary": "Moderate size is appropriate."
+    }
+  },
+  "raw_decision": {
+    "source": "mock-fixture",
+    "version": "1"
+  }
+}

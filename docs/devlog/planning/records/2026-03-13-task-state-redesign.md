@@ -64,14 +64,26 @@ Use PostgreSQL as the persistent business truth and Redis as the runtime coordin
 
 ## Testing and validation
 
-Planned:
+- Go now generates `task_id`, persists `trading_analysis_tasks`, and enqueues the request into Redis.
+- Python now consumes queued requests from Redis and persists runtime state in Redis instead of an in-process dictionary.
+- Go task reads now combine PostgreSQL and Redis runtime state and persist terminal results back to PostgreSQL.
+- Frontend polling remained compatible with the new `task_id / status / decision / analysis_report` response shape.
+- Verified locally with:
+  - `go test ./...` in `backend`
+  - `python -m py_compile` for `langchain-v1/trading_service.py`
+  - `npm run build` in `frontend`
+  - live local API submission and polling against the refactored task lifecycle
 
-- restart-resilience test
-- concurrent task execution test
-- duplicate task protection test
-- compatibility test for existing frontend polling
+Still pending:
+
+- restart-resilience test across an in-flight live task
+- concurrent task execution stress validation
+- startup or scheduled reconciliation beyond request-driven reads
 
 ## Outcome and follow-up
 
-Status: planned, not yet implemented.
+Status: implemented for the main request lifecycle.
 
+Remaining gap:
+
+- reconciliation currently runs on task read/list/stats paths; a background sweeper is still optional future hardening

@@ -9,10 +9,10 @@ DEFAULT_CONFIG = {
         "dataflows/data_cache",
     ),
     # LLM settings
-    "llm_provider": os.getenv("LLM_PROVIDER", "openai"),
-    "deep_think_llm": os.getenv("LLM_DEEP_MODEL", "o4-mini"),
-    "quick_think_llm": os.getenv("LLM_QUICK_MODEL", "gpt-4o-mini"),
-    "backend_url": os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"),
+    "llm_provider": os.getenv("LLM_PROVIDER", "ollama"),
+    "deep_think_llm": os.getenv("LLM_DEEP_MODEL", "gemma3:1b"),
+    "quick_think_llm": os.getenv("LLM_QUICK_MODEL", "gemma3:1b"),
+    "backend_url": os.getenv("LLM_BASE_URL", "http://localhost:11434"),
     "llm_timeout": int(os.getenv("LLM_TIMEOUT", "60")),
     "llm_temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "llm_api_key": os.getenv("LLM_API_KEY"),  # optional override; otherwise provider-specific envs are used

@@ -1,0 +1,48 @@
+{
+  "fundamental_analysis": {
+    "summary": "Revenue growth remains intact and margins are stable."
+  },
+  "sentiment_analysis": {
+    "summary": "Retail and analyst sentiment are mildly positive."
+  },
+  "technical_analysis": {
+    "summary": "Momentum is constructive after a pullback."
+  },
+  "news_analysis": {
+    "summary": "No critical macro shock detected in the lookback window."
+  },
+  "bull_researcher": {
+    "thesis": "AI demand and product cycle remain supportive."
+  },
+  "bear_researcher": {
+    "thesis": "Valuation leaves limited room for disappointment."
+  },
+  "trader_analysis": {
+    "plan": "Accumulate on weakness with a defined risk budget."
+  },
+  "risk_assessment": {
+    "summary": "Position sizing should remain moderate."
+  },
+  "portfolio_manager": {
+    "allocation_note": "Use partial size until confirmation."
+  },
+  "messages": [
+    {
+      "type": "human",
+      "content": "Analyze NVDA for 2024-05-10 using the configured providers."
+    },
+    {
+      "type": "ai",
+      "content": "Initial synthesis complete. Preparing final trade decision."
+    }
+  ],
+  "raw_trace": {
+    "selected_analysts": [
+      "market",
+      "social",
+      "news",
+      "fundamentals"
+    ],
+    "provider": "mock-llm"
+  }
+}

@@ -4,6 +4,11 @@ const rawApiUrl = import.meta.env.VITE_API_URL
 const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/$/, '') : ''
 const TOKEN_STORAGE_KEY = 'fingoat_token'
 
+const withBearerToken = (token: string | null): string => {
+    if (!token) return ''
+    return token.startsWith('Bearer ') ? token : `Bearer ${token}`
+}
+
 export interface AnalysisRequest {
     ticker: string
     date: string
@@ -19,26 +24,26 @@ export interface TradingDecision {
     action: 'BUY' | 'SELL' | 'HOLD'
     confidence: number
     position_size?: number
-    reasoning?: any
-    raw_decision?: any
+    reasoning?: Record<string, unknown>
+    raw_decision?: Record<string, unknown>
 }
 
 export interface AnalysisTask {
-    ID: number
+    id: number
     task_id: string
     ticker: string
     analysis_date: string
-    status: 'pending' | 'processing' | 'completed' | 'failed'
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
     decision?: TradingDecision
-    analysis_report?: any
+    analysis_report?: Record<string, unknown>
     error?: string
     completed_at?: string
     processing_time_seconds?: number
     llm_provider?: string
     llm_model?: string
     llm_base_url?: string
-    CreatedAt: string
-    UpdatedAt: string
+    created_at: string
+    updated_at: string
 }
 
 export interface AnalysisStats {
@@ -53,12 +58,26 @@ export interface AnalysisStats {
     }
 }
 
+export interface TradingServiceHealth {
+    status: string
+    trading_service: Record<string, unknown>
+}
+
+export interface OHLCVPoint {
+    date: string
+    open: number
+    high: number
+    low: number
+    close: number
+    volume: number
+}
+
 class TradingService {
     private getAuthHeaders(): HeadersInit {
         const token = localStorage.getItem(TOKEN_STORAGE_KEY)
         return {
             'Content-Type': 'application/json',
-            'Authorization': token || '',
+            'Authorization': withBearerToken(token),
         }
     }
 
@@ -90,6 +109,34 @@ class TradingService {
         return response.json()
     }
 
+    async cancelAnalysis(taskId: string): Promise<AnalysisTask> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/analysis/${taskId}/cancel`, {
+            method: 'POST',
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to cancel analysis' }))
+            throw new Error(error.error || 'Failed to cancel analysis')
+        }
+
+        return response.json()
+    }
+
+    async resumeAnalysis(taskId: string): Promise<AnalysisTask> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/analysis/${taskId}/resume`, {
+            method: 'POST',
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to resume analysis' }))
+            throw new Error(error.error || 'Failed to resume analysis')
+        }
+
+        return response.json()
+    }
+
     async listAnalyses(): Promise<{ tasks: AnalysisTask[]; total: number }> {
         const response = await fetch(`${API_BASE_URL}/api/trading/analyses`, {
             headers: this.getAuthHeaders(),
@@ -116,7 +163,7 @@ class TradingService {
         return response.json()
     }
 
-    async checkHealth(): Promise<{ status: string; trading_service: any }> {
+    async checkHealth(): Promise<TradingServiceHealth> {
         const response = await fetch(`${API_BASE_URL}/api/trading/health`, {
             headers: this.getAuthHeaders(),
         })
@@ -142,7 +189,7 @@ class TradingService {
                 onProgress(task)
             }
 
-            if (task.status === 'completed' || task.status === 'failed') {
+            if (task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
                 return task
             }
 
@@ -151,6 +198,19 @@ class TradingService {
         }
 
         throw new Error('Analysis timeout - please check status manually')
+    }
+
+    async getStockChart(ticker: string, range: string = '3m'): Promise<{ ticker: string; range: string; data: OHLCVPoint[] }> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/chart/${encodeURIComponent(ticker)}?range=${range}`, {
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to fetch chart data' }))
+            throw new Error(error.error || 'Failed to fetch chart data')
+        }
+
+        return response.json()
     }
 }
 

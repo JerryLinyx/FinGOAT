@@ -52,6 +52,7 @@ services:
       - DB_NAME=fingoat_db
       - REDIS_ADDR=redis:6379
       - TRADING_SERVICE_URL=http://trading-service:8001
+      - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-}
       # Override in production: comma-separated origins, or "*" (disables credentials)
       - FRONTEND_ORIGINS=http://localhost,http://localhost:8080
     depends_on:
@@ -81,11 +82,13 @@ services:
     environment:
       - TRADING_SERVICE_PORT=8001
       - TRADING_SERVICE_HOST=0.0.0.0
+      - REDIS_ADDR=redis:6379
+      - REDIS_DB=0
       # 默认使用本地主机 Ollama（便于本地验证）；云端部署时可改回 OpenAI 或其它 provider。
       - LLM_PROVIDER=ollama
       - LLM_BASE_URL=http://host.docker.internal:11434
-      - LLM_QUICK_MODEL=gemma3:27b
-      - LLM_DEEP_MODEL=gemma3:27b
+      - LLM_QUICK_MODEL=gemma3:1b
+      - LLM_DEEP_MODEL=gemma3:1b
       - LLM_TIMEOUT=120
       - LLM_TEMPERATURE=0.2
       - DEBUG=true

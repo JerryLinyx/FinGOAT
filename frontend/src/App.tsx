@@ -4,15 +4,20 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import './App.css'
 import { TradingAnalysis } from './components/TradingAnalysis'
+import { ChartPage } from './components/ChartPage'
 
 type AuthMode = 'login' | 'register'
 type View = 'auth' | 'home'
 type Theme = 'light' | 'dark'
+type CollapsiblePanel = 'config' | 'news'
+type DragPanel = 'config' | 'news' | null
+type ActiveTab = 'dashboard' | 'chart'
 
 type Article = {
   id: number
@@ -43,18 +48,27 @@ const ThemeToggleButton = () => {
   return (
     <button type="button" className="theme-toggle" onClick={toggleTheme} aria-label="Toggle theme">
       {theme === 'light' ? (
-        <svg viewBox="0 0 24 24" role="presentation" width="18" height="18">
+        <svg viewBox="0 0 24 24" role="presentation" width="20" height="20" aria-hidden="true">
           <path
-            d="M21 13.5A8.5 8.5 0 0 1 10.5 3 6.5 6.5 0 1 0 21 13.5Z"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
+            d="M15.2 2.7A8.8 8.8 0 1 0 21 15.8a7.3 7.3 0 0 1-5.8-13.1Z"
+            fill="currentColor"
+            opacity="0.95"
           />
+          <circle cx="17.4" cy="6.1" r="1.1" fill="currentColor" opacity="0.55" />
         </svg>
       ) : (
-        <svg viewBox="0 0 24 24" role="presentation" width="18" height="18">
-          <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" strokeWidth="2" />
-          <path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l-1.5-1.5M20.5 20.5 19 19M5 19l-1.5 1.5M20.5 3.5 19 5" stroke="currentColor" strokeWidth="2" />
+        <svg viewBox="0 0 24 24" role="presentation" width="20" height="20" aria-hidden="true">
+          <circle cx="12" cy="12" r="4.25" fill="currentColor" />
+          <g stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+            <path d="M12 1.9v2.4" />
+            <path d="M12 19.7v2.4" />
+            <path d="M1.9 12h2.4" />
+            <path d="M19.7 12h2.4" />
+            <path d="M4.4 4.4l1.7 1.7" />
+            <path d="M17.9 17.9l1.7 1.7" />
+            <path d="M4.4 19.6l1.7-1.7" />
+            <path d="M17.9 6.1l1.7-1.7" />
+          </g>
         </svg>
       )}
     </button>
@@ -103,20 +117,19 @@ const TOKEN_STORAGE_KEY = 'fingoat_token'
 const rawApiUrl = import.meta.env.VITE_API_URL
 const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/$/, '') : ''
 
+const getAuthorizationHeader = (): string => {
+  const token = localStorage.getItem(TOKEN_STORAGE_KEY)
+  if (!token) {
+    return ''
+  }
+  return token.startsWith('Bearer ') ? token : `Bearer ${token}`
+}
+
 const initialForm = {
   username: '',
   password: '',
   confirmPassword: '',
 }
-
-const NAV_LINKS = [
-  { label: 'Dashboard', status: 'Live' },
-  { label: 'Markets', status: 'TODO' },
-  { label: 'Portfolio', status: 'TODO' },
-  { label: 'History', status: 'TODO' },
-] as const
-
-
 
 const DATA_SOURCES = [
   { label: 'Bloomberg Terminal', enabled: true },
@@ -131,6 +144,10 @@ const NOTIFICATION_CHANNELS = [
 ] as const
 
 const RISK_LABELS = ['Conservative', 'Moderate', 'Aggressive'] as const
+const SIDE_PANEL_MIN_WIDTH = 240
+const SIDE_PANEL_MAX_WIDTH = 460
+const SIDE_PANEL_COLLAPSED_WIDTH = 84
+const DESKTOP_BREAKPOINT = 900
 
 const getStoredTheme = (): Theme => {
   if (typeof window === 'undefined') {
@@ -141,9 +158,11 @@ const getStoredTheme = (): Theme => {
 }
 
 function App() {
+  const dashboardGridRef = useRef<HTMLElement | null>(null)
   const [theme, setTheme] = useState<Theme>(getStoredTheme)
   const [mode, setMode] = useState<AuthMode>('login')
   const [view, setView] = useState<View>('auth')
+  const [activeTab, setActiveTab] = useState<ActiveTab>('dashboard')
   const [form, setForm] = useState(initialForm)
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -174,9 +193,21 @@ function App() {
   const [expandedArticles, setExpandedArticles] = useState<Record<number, boolean>>({})
   const [articleLikes, setArticleLikes] = useState<Record<number, number>>({})
   const [likingArticle, setLikingArticle] = useState<Record<number, boolean>>({})
-  const [llmProvider, setLlmProvider] = useState('openai')
-  const [llmModel, setLlmModel] = useState('gpt-4o-mini')
-  const [llmBaseUrl, setLlmBaseUrl] = useState('https://api.openai.com/v1')
+  const [llmProvider, setLlmProvider] = useState('ollama')
+  const [llmModel, setLlmModel] = useState('gemma3:1b')
+  const [llmBaseUrl, setLlmBaseUrl] = useState('http://localhost:11434')
+  const [collapsedPanels, setCollapsedPanels] = useState<Record<CollapsiblePanel, boolean>>({
+    config: false,
+    news: false,
+  })
+  const [panelWidths, setPanelWidths] = useState<Record<CollapsiblePanel, number>>({
+    config: 320,
+    news: 320,
+  })
+  const [draggingPanel, setDraggingPanel] = useState<DragPanel>(null)
+  const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
+    typeof window === 'undefined' ? true : window.innerWidth > DESKTOP_BREAKPOINT,
+  )
 
   useEffect(() => {
     localStorage.setItem('fingoat_theme', theme)
@@ -192,6 +223,18 @@ function App() {
     if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
       setView('home')
     }
+  }, [])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleResize = () => {
+      setIsDesktopLayout(window.innerWidth > DESKTOP_BREAKPOINT)
+    }
+
+    handleResize()
+    window.addEventListener('resize', handleResize)
+    return () => window.removeEventListener('resize', handleResize)
   }, [])
 
   const subtitle = useMemo(() => {
@@ -245,7 +288,7 @@ function App() {
 
   const fetchArticleLikes = useCallback(
     async (ids: number[]) => {
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY)
+      const token = getAuthorizationHeader()
       if (!token || ids.length === 0) {
         return
       }
@@ -294,7 +337,7 @@ function App() {
     async (options?: { signal?: AbortSignal; refresh?: boolean }) => {
       const signal = options?.signal
       const shouldRefresh = options?.refresh
-      const token = localStorage.getItem(TOKEN_STORAGE_KEY)
+      const token = getAuthorizationHeader()
       if (!token) {
         resetSession()
         return
@@ -388,7 +431,7 @@ function App() {
   }, [view, fetchArticles])
 
   const handleLikeArticle = async (articleId: number) => {
-    const token = localStorage.getItem(TOKEN_STORAGE_KEY)
+    const token = getAuthorizationHeader()
     if (!token) {
       resetSession()
       return
@@ -414,7 +457,7 @@ function App() {
           [articleId]: (prev[articleId] ?? 0) + 1,
         }))
       }
-    } catch (error) {
+    } catch {
       setArticlesError((prev) =>
         prev || 'Unable to register your like right now. Please try again later.',
       )
@@ -511,20 +554,26 @@ function App() {
     anthropic: ['claude-3-haiku-20240307', 'claude-3-5-sonnet-latest'],
     google: ['gemini-1.5-flash', 'gemini-1.5-pro'],
     deepseek: ['deepseek-chat'],
-    aliyun: ['deepseek-v3.2', 'glm-4.6', 'Moonshot-Kimi-K2-Instruct', 'qwen3-vl-32b-thinking'],
+    aliyun: [
+      'qwen3.5-flash',
+      'deepseek-v3.2',
+      'glm-4.6',
+      'Moonshot-Kimi-K2-Instruct',
+      'qwen3-vl-32b-thinking',
+    ],
     'openai-compatible': ['gpt-4o-mini'],
     vllm: ['gpt-4o-mini'],
     ollama: [
+      'gemma3:1b',
+      'llama3.2',
       'llama3.1',
       'llama3.1:405b',
-      'llama3.2',
       'llama3.2:1b',
       'llama3.2-vision',
       'llama3.2-vision:90b',
       'llama3.3',
       'llama4:scout',
       'llama4:maverick',
-      'gemma3:1b',
       'gemma3',
       'gemma3:12b',
       'gemma3:27b',
@@ -576,6 +625,81 @@ function App() {
     setLlmBaseUrl(e.target.value)
   }
 
+  const togglePanelCollapse = (panel: CollapsiblePanel) => {
+    setCollapsedPanels((prev) => ({
+      ...prev,
+      [panel]: !prev[panel],
+    }))
+  }
+
+  const isDraggingRef = useRef(false)
+  const dragStartXRef = useRef(0)
+
+  const handleSplitterMouseDown = (e: React.MouseEvent, panel: CollapsiblePanel) => {
+    if (!isDesktopLayout) return
+    isDraggingRef.current = false
+    dragStartXRef.current = e.clientX
+    setCollapsedPanels((prev) => ({
+      ...prev,
+      [panel]: false,
+    }))
+    setDraggingPanel(panel)
+  }
+
+  useEffect(() => {
+    if (!draggingPanel || !dashboardGridRef.current || !isDesktopLayout) return undefined
+
+    const handleMouseMove = (event: MouseEvent) => {
+      if (Math.abs(event.clientX - dragStartXRef.current) > 4) {
+        isDraggingRef.current = true
+      }
+      const bounds = dashboardGridRef.current?.getBoundingClientRect()
+      if (!bounds) return
+
+      if (draggingPanel === 'config') {
+        const measuredWidth = event.clientX - bounds.left
+        if (measuredWidth < 180) {
+          setCollapsedPanels((prev) => ({ ...prev, config: true }))
+        } else {
+          setCollapsedPanels((prev) => ({ ...prev, config: false }))
+          const nextWidth = Math.min(
+            SIDE_PANEL_MAX_WIDTH,
+            Math.max(SIDE_PANEL_MIN_WIDTH, measuredWidth),
+          )
+          setPanelWidths((prev) => ({ ...prev, config: nextWidth }))
+        }
+      } else if (draggingPanel === 'news') {
+        const measuredWidth = bounds.right - event.clientX
+        if (measuredWidth < 180) {
+          setCollapsedPanels((prev) => ({ ...prev, news: true }))
+        } else {
+          setCollapsedPanels((prev) => ({ ...prev, news: false }))
+          const nextWidth = Math.min(
+            SIDE_PANEL_MAX_WIDTH,
+            Math.max(SIDE_PANEL_MIN_WIDTH, measuredWidth),
+          )
+          setPanelWidths((prev) => ({ ...prev, news: nextWidth }))
+        }
+      }
+    }
+
+    const handleMouseUp = () => {
+      setDraggingPanel(null)
+    }
+
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+    }
+  }, [draggingPanel, isDesktopLayout])
+
   const formatTimestamp = (value?: string) => {
     if (!value) return 'Moments ago'
     const date = new Date(value)
@@ -588,53 +712,79 @@ function App() {
     })
   }
 
+  const isConfigCollapsed = isDesktopLayout && collapsedPanels.config
+  const isNewsCollapsed = isDesktopLayout && collapsedPanels.news
+
   const dashboardView = (
     <div className="dashboard">
       <header className="top-nav">
         <div className="brand">
-          <div className="brand-mark">FG</div>
+          <div className="brand-mark" aria-label="FinGOAT logo">🐐</div>
           <div className="brand-copy">
             <strong>FinGOAT</strong>
-            <span>Financial Graph-Orchestrated Agent Trading</span>
+            <span className="brand-subtitle">Financial Graph-Orchestrated Agent Trading</span>
           </div>
         </div>
-        <nav className="nav-links">
-          {NAV_LINKS.map(({ label }) => (
-            <button
-              key={label}
-              type="button"
-              className={`nav-link ${label === 'Dashboard' ? 'active' : ''}`}
-              disabled={label !== 'Dashboard'}
-            >
-              {label}
-            </button>
-          ))}
+        <nav className="nav-tabs">
+          <button
+            type="button"
+            className={`nav-tab ${activeTab === 'dashboard' ? 'nav-tab--active' : ''}`}
+            onClick={() => setActiveTab('dashboard')}
+          >
+            Dashboard
+          </button>
+          <button
+            type="button"
+            className={`nav-tab ${activeTab === 'chart' ? 'nav-tab--active' : ''}`}
+            onClick={() => setActiveTab('chart')}
+          >
+            Chart
+          </button>
         </nav>
         <div className="nav-actions">
           <ThemeToggleButton />
+          <a
+            href="https://github.com/JerryLinyx/FinGOAT"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="github-link"
+            aria-label="View source on GitHub"
+            title="View source on GitHub"
+          >
+            <svg viewBox="0 0 24 24" role="presentation" width="18" height="18" aria-hidden="true" fill="currentColor">
+              <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
+            </svg>
+          </a>
           <button type="button" className="logout-btn" onClick={handleLogout}>
             Logout
           </button>
         </div>
       </header>
 
-      <div className="todo-strip">
-        Navigation targets are placeholders—full page switching remains a TODO.
-      </div>
-
-      <main className="dashboard-grid">
-        <section className="panel config-panel">
+      {activeTab === 'chart' ? (
+        <ChartPage onSessionExpired={resetSession} />
+      ) : (
+      <main
+        ref={dashboardGridRef}
+        className={`dashboard-grid ${isDesktopLayout ? 'dashboard-grid--resizable' : ''}`}
+        style={
+          isDesktopLayout
+            ? {
+              gridTemplateColumns: `${isConfigCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.config}px 14px minmax(0, 1fr) 14px ${isNewsCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.news}px`,
+            }
+            : undefined
+        }
+      >
+        <section className={`panel config-panel panel--side ${isConfigCollapsed ? 'panel--side-collapsed' : ''}`}>
           <div className="panel-heading">
             <PanelIcon type="config" />
-            <div>
+            <div className={`panel-heading-copy ${isConfigCollapsed ? 'panel-heading-copy--hidden' : ''}`}>
               <p className="panel-label">Configuration</p>
               <h2>Agent Settings</h2>
             </div>
-            <button type="button" className="panel-action" disabled>
-              TODO
-            </button>
           </div>
 
+          {!isConfigCollapsed && (
           <div className="panel-body scrollable">
             <div className="config-group">
               <label className="config-label" htmlFor="ai-model">
@@ -678,7 +828,7 @@ function App() {
                   type="text"
                   value={llmModel}
                   onChange={handleLlmModelChange}
-                  placeholder="e.g., gpt-4o-mini / deepseek-v3.2 / glm-4.6 / Moonshot-Kimi-K2-Instruct / qwen3-vl-32b-thinking"
+                  placeholder="e.g., gpt-4o-mini / qwen3.5-flash / deepseek-v3.2 / glm-4.6 / Moonshot-Kimi-K2-Instruct / qwen3-vl-32b-thinking"
                 />
               </div>
             </div>
@@ -781,7 +931,27 @@ function App() {
               </button>
             </div>
           </div>
+          )}
         </section>
+
+        <div className={`panel-splitter panel-splitter--left ${draggingPanel === 'config' ? 'panel-splitter--active' : ''}`}>
+          <button
+            type="button"
+            className="panel-splitter__toggle"
+            onClick={(e) => {
+              if (isDraggingRef.current) {
+                e.preventDefault()
+                return
+              }
+              togglePanelCollapse('config')
+            }}
+            onMouseDown={(e) => handleSplitterMouseDown(e, 'config')}
+            aria-label={isConfigCollapsed ? 'Expand configuration sidebar' : 'Collapse configuration sidebar'}
+            title={isConfigCollapsed ? 'Expand configuration sidebar' : 'Collapse configuration sidebar'}
+          >
+            {isConfigCollapsed ? '▸' : '◂'}
+          </button>
+        </div>
 
         <section className="panel ai-panel">
           <div className="panel-heading">
@@ -790,8 +960,14 @@ function App() {
               <p className="panel-label">Trading Analysis</p>
               <h2>Stock Analysis</h2>
             </div>
-            <button type="button" className="panel-action" onClick={loadPreviousAnalyses}>
-              Refresh
+            <button
+              type="button"
+              className="panel-action panel-action--icon"
+              onClick={loadPreviousAnalyses}
+              aria-label="Refresh analyses"
+              title="Refresh analyses"
+            >
+              ↺
             </button>
           </div>
 
@@ -805,23 +981,47 @@ function App() {
           </div>
         </section>
 
-        <section className="panel news-panel">
+        <div className={`panel-splitter panel-splitter--right ${draggingPanel === 'news' ? 'panel-splitter--active' : ''}`}>
+          <button
+            type="button"
+            className="panel-splitter__toggle"
+            onClick={(e) => {
+              if (isDraggingRef.current) {
+                e.preventDefault()
+                return
+              }
+              togglePanelCollapse('news')
+            }}
+            onMouseDown={(e) => handleSplitterMouseDown(e, 'news')}
+            aria-label={isNewsCollapsed ? 'Expand market news sidebar' : 'Collapse market news sidebar'}
+            title={isNewsCollapsed ? 'Expand market news sidebar' : 'Collapse market news sidebar'}
+          >
+            {isNewsCollapsed ? '◂' : '▸'}
+          </button>
+        </div>
+
+        <section className={`panel news-panel panel--side ${isNewsCollapsed ? 'panel--side-collapsed' : ''}`}>
           <div className="panel-heading">
             <PanelIcon type="news" />
-            <div>
+            <div className={`panel-heading-copy ${isNewsCollapsed ? 'panel-heading-copy--hidden' : ''}`}>
               <p className="panel-label">Market News</p>
               <h2>Live Articles</h2>
             </div>
-            <button
-              type="button"
-              className="panel-action"
-              onClick={() => fetchArticles({ refresh: true })}
-              disabled={articlesLoading}
-            >
-              {articlesLoading ? 'Refreshing…' : 'Refresh'}
-            </button>
+            <div className="panel-heading-actions">
+              <button
+                type="button"
+                className="panel-action panel-action--icon"
+                onClick={() => fetchArticles({ refresh: true })}
+                disabled={articlesLoading}
+                aria-label={articlesLoading ? 'Refreshing articles' : 'Refresh articles'}
+                title={articlesLoading ? 'Refreshing articles' : 'Refresh articles'}
+              >
+                ↺
+              </button>
+            </div>
           </div>
 
+          {!isNewsCollapsed && (
           <div className="panel-body">
             <div className="news-list">
               {articlesLoading && <p className="news-placeholder">Loading articles…</p>}
@@ -886,8 +1086,10 @@ function App() {
                 })}
             </div>
           </div>
+          )}
         </section>
       </main>
+      )}
     </div>
   )
 

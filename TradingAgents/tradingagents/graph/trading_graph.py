@@ -1,10 +1,11 @@
 # TradingAgents/graph/trading_graph.py
 
 import os
+import asyncio
 from pathlib import Path
 import json
 from datetime import date
-from typing import Dict, Any, Tuple, List, Optional
+from typing import Dict, Any, Tuple, List, Optional, Callable, Awaitable
 
 from langgraph.prebuilt import ToolNode
 
@@ -145,7 +146,12 @@ class TradingAgentsGraph:
             ),
         }
 
-    def propagate(self, company_name, trade_date):
+    def propagate(
+        self,
+        company_name,
+        trade_date,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Optional[Awaitable[None]]]] = None,
+    ):
         """Run the trading agents graph for a company on a specific date."""
 
         self.ticker = company_name
@@ -156,20 +162,13 @@ class TradingAgentsGraph:
         )
         args = self.propagator.get_graph_args()
 
-        if self.debug:
-            # Debug mode with tracing
-            trace = []
-            for chunk in self.graph.stream(init_agent_state, **args):
-                if len(chunk["messages"]) == 0:
-                    pass
-                else:
-                    chunk["messages"][-1].pretty_print()
-                    trace.append(chunk)
-
-            final_state = trace[-1]
-        else:
-            # Standard mode without tracing
-            final_state = self.graph.invoke(init_agent_state, **args)
+        final_state = asyncio.run(
+            self.propagate_async(
+                init_agent_state,
+                args,
+                progress_callback=progress_callback,
+            )
+        )
 
         # Store current state for reflection
         self.curr_state = final_state
@@ -179,6 +178,26 @@ class TradingAgentsGraph:
 
         # Return decision and processed signal
         return final_state, self.process_signal(final_state["final_trade_decision"])
+
+    async def propagate_async(
+        self,
+        init_agent_state,
+        args,
+        progress_callback: Optional[Callable[[Dict[str, Any]], Optional[Awaitable[None]]]] = None,
+    ):
+        if self.debug or progress_callback is not None:
+            latest_chunk = init_agent_state
+            async for chunk in self.graph.astream(init_agent_state, **args):
+                latest_chunk = chunk
+                if progress_callback is not None:
+                    maybe_awaitable = progress_callback(chunk)
+                    if asyncio.iscoroutine(maybe_awaitable) or isinstance(maybe_awaitable, asyncio.Future):
+                        await maybe_awaitable
+                if self.debug and len(chunk.get("messages", [])) > 0:
+                    chunk["messages"][-1].pretty_print()
+            return latest_chunk
+
+        return await self.graph.ainvoke(init_agent_state, **args)
 
     def _log_state(self, trade_date, final_state):
         """Log the final state to a JSON file."""

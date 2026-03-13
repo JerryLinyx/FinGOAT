@@ -74,9 +74,12 @@ func InitRouter() *gin.Engine {
 		{
 			trading.POST("/analyze", controllers.RequestAnalysis)
 			trading.GET("/analysis/:task_id", controllers.GetAnalysisResult)
+			trading.POST("/analysis/:task_id/cancel", controllers.CancelAnalysis)
+			trading.POST("/analysis/:task_id/resume", controllers.ResumeAnalysis)
 			trading.GET("/analyses", controllers.ListUserAnalyses)
 			trading.GET("/stats", controllers.GetAnalysisStats)
 			trading.GET("/health", controllers.CheckServiceHealth)
+			trading.GET("/chart/:ticker", controllers.GetStockChart)
 		}
 	}
 

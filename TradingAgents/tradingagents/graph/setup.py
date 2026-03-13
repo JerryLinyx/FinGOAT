@@ -1,5 +1,7 @@
 # TradingAgents/graph/setup.py
 
+import asyncio
+import time
 from typing import Dict, Any
 from langchain_openai import ChatOpenAI
 from langgraph.graph import END, StateGraph, START
@@ -54,35 +56,30 @@ class GraphSetup:
 
         # Create analyst nodes
         analyst_nodes = {}
-        delete_nodes = {}
         tool_nodes = {}
 
         if "market" in selected_analysts:
             analyst_nodes["market"] = create_market_analyst(
                 self.quick_thinking_llm
             )
-            delete_nodes["market"] = create_msg_delete()
             tool_nodes["market"] = self.tool_nodes["market"]
 
         if "social" in selected_analysts:
             analyst_nodes["social"] = create_social_media_analyst(
                 self.quick_thinking_llm
             )
-            delete_nodes["social"] = create_msg_delete()
             tool_nodes["social"] = self.tool_nodes["social"]
 
         if "news" in selected_analysts:
             analyst_nodes["news"] = create_news_analyst(
                 self.quick_thinking_llm
             )
-            delete_nodes["news"] = create_msg_delete()
             tool_nodes["news"] = self.tool_nodes["news"]
 
         if "fundamentals" in selected_analysts:
             analyst_nodes["fundamentals"] = create_fundamentals_analyst(
                 self.quick_thinking_llm
             )
-            delete_nodes["fundamentals"] = create_msg_delete()
             tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
 
         # Create researcher and manager nodes
@@ -108,49 +105,88 @@ class GraphSetup:
         # Create workflow
         workflow = StateGraph(AgentState)
 
+        def timed_node(label: str, fn):
+            async def wrapper(state):
+                start_key = f"__stage_starts.{label}"
+                end_key = f"__stage_ends.{label}"
+
+                start_ts = state.get(start_key, time.time())
+                result = fn(state)
+                if asyncio.iscoroutine(result) or isinstance(result, asyncio.Future):
+                    result = await result
+                end_ts = time.time()
+
+                timing_update = {start_key: start_ts, end_key: end_ts}
+                if isinstance(result, dict):
+                    return {**result, **timing_update}
+                return timing_update
+
+            return wrapper
+
         # Add analyst nodes to the graph
         for analyst_type, node in analyst_nodes.items():
-            workflow.add_node(f"{analyst_type.capitalize()} Analyst", node)
             workflow.add_node(
-                f"Msg Clear {analyst_type.capitalize()}", delete_nodes[analyst_type]
+                f"{analyst_type.capitalize()} Analyst",
+                timed_node(f"{analyst_type.capitalize()} Analyst", node),
             )
             workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
 
+        workflow.add_node("Analyst Join", lambda state: state)
+        workflow.add_node("Analyst Wait", lambda state: state)
+        workflow.add_node("Msg Clear Analysts", create_msg_delete())
+
         # Add other nodes
-        workflow.add_node("Bull Researcher", bull_researcher_node)
-        workflow.add_node("Bear Researcher", bear_researcher_node)
-        workflow.add_node("Research Manager", research_manager_node)
-        workflow.add_node("Trader", trader_node)
-        workflow.add_node("Risky Analyst", risky_analyst)
-        workflow.add_node("Neutral Analyst", neutral_analyst)
-        workflow.add_node("Safe Analyst", safe_analyst)
-        workflow.add_node("Risk Judge", risk_manager_node)
+        workflow.add_node("Bull Researcher", timed_node("Bull Researcher", bull_researcher_node))
+        workflow.add_node("Bear Researcher", timed_node("Bear Researcher", bear_researcher_node))
+        workflow.add_node("Research Manager", timed_node("Research Manager", research_manager_node))
+        workflow.add_node("Trader", timed_node("Trader", trader_node))
+        workflow.add_node("Risky Analyst", timed_node("Risky Analyst", risky_analyst))
+        workflow.add_node("Neutral Analyst", timed_node("Neutral Analyst", neutral_analyst))
+        workflow.add_node("Safe Analyst", timed_node("Safe Analyst", safe_analyst))
+        workflow.add_node("Risk Judge", timed_node("Risk Judge", risk_manager_node))
+
+        def should_proceed_all_analysts(state):
+            required_reports = []
+            if "market" in selected_analysts:
+                required_reports.append(state.get("market_report"))
+            if "social" in selected_analysts:
+                required_reports.append(state.get("sentiment_report"))
+            if "news" in selected_analysts:
+                required_reports.append(state.get("news_report"))
+            if "fundamentals" in selected_analysts:
+                required_reports.append(state.get("fundamentals_report"))
+
+            ready = all(bool(report) for report in required_reports)
+            return "proceed" if ready else "wait"
 
         # Define edges
-        # Start with the first analyst
-        first_analyst = selected_analysts[0]
-        workflow.add_edge(START, f"{first_analyst.capitalize()} Analyst")
+        # Start all independent analysts in parallel. Synchronize them through
+        # an explicit join node before entering the downstream debate workflow.
+        for analyst_type in selected_analysts:
+            workflow.add_edge(START, f"{analyst_type.capitalize()} Analyst")
 
-        # Connect analysts in sequence
-        for i, analyst_type in enumerate(selected_analysts):
+        for analyst_type in selected_analysts:
             current_analyst = f"{analyst_type.capitalize()} Analyst"
             current_tools = f"tools_{analyst_type}"
-            current_clear = f"Msg Clear {analyst_type.capitalize()}"
 
             # Add conditional edges for current analyst
             workflow.add_conditional_edges(
                 current_analyst,
                 getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                [current_tools, current_clear],
+                [current_tools, "Analyst Join"],
             )
             workflow.add_edge(current_tools, current_analyst)
 
-            # Connect to next analyst or to Bull Researcher if this is the last analyst
-            if i < len(selected_analysts) - 1:
-                next_analyst = f"{selected_analysts[i+1].capitalize()} Analyst"
-                workflow.add_edge(current_clear, next_analyst)
-            else:
-                workflow.add_edge(current_clear, "Bull Researcher")
+        workflow.add_conditional_edges(
+            "Analyst Join",
+            should_proceed_all_analysts,
+            {
+                "proceed": "Msg Clear Analysts",
+                "wait": "Analyst Wait",
+            },
+        )
+        workflow.add_edge("Analyst Wait", "Analyst Join")
+        workflow.add_edge("Msg Clear Analysts", "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(

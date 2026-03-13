@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"net/url"
 	"net/http"
 	"regexp"
 	"sort"
@@ -21,6 +22,7 @@ import (
 
 var cacheKey = "articles"
 var httpClient = &http.Client{Timeout: 10 * time.Second}
+const maxRefreshItemsPerFeed = 10
 
 type rssFeedDef struct {
 	Name string
@@ -71,6 +73,18 @@ type atomEnvelope struct {
 }
 
 var htmlTagRegex = regexp.MustCompile("<[^>]*>")
+var trackingQueryPrefixes = []string{"utm_"}
+var trackingQueryKeys = map[string]struct{}{
+	"fbclid":  {},
+	"gclid":   {},
+	"mc_cid":  {},
+	"mc_eid":  {},
+	"ref":     {},
+	"ref_src": {},
+	"source":  {},
+	"spm":     {},
+	"from":    {},
+}
 
 func parseTimeString(value string) *time.Time {
 	if strings.TrimSpace(value) == "" {
@@ -108,6 +122,107 @@ func truncate(text string, maxLen int) string {
 		return text[:maxLen]
 	}
 	return text[:maxLen-3] + "..."
+}
+
+func normalizeArticleLink(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+
+	parsed.Fragment = ""
+
+	query := parsed.Query()
+	for key := range query {
+		lowerKey := strings.ToLower(key)
+		if _, tracked := trackingQueryKeys[lowerKey]; tracked {
+			query.Del(key)
+			continue
+		}
+		for _, prefix := range trackingQueryPrefixes {
+			if strings.HasPrefix(lowerKey, prefix) {
+				query.Del(key)
+				break
+			}
+		}
+	}
+	parsed.RawQuery = query.Encode()
+
+	if parsed.Path != "/" {
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+	}
+
+	return parsed.String()
+}
+
+func matchesArticleFingerprint(existing models.Article, feedName string, item rssItem, normalizedLink string) bool {
+	if normalizedLink != "" && existing.Link == normalizedLink {
+		return true
+	}
+
+	trimmedGUID := strings.TrimSpace(item.GUID)
+	if trimmedGUID != "" && existing.GUID == trimmedGUID {
+		return true
+	}
+
+	title := strings.TrimSpace(item.Title)
+	if title == "" || existing.Source != feedName || existing.Title != title {
+		return false
+	}
+
+	if item.PublishedAt == nil && existing.PublishedAt == nil {
+		return true
+	}
+	if item.PublishedAt == nil || existing.PublishedAt == nil {
+		return false
+	}
+	return existing.PublishedAt.Equal(*item.PublishedAt)
+}
+
+func findExistingArticle(ctx context.Context, feed models.RSSFeed, item rssItem, normalizedLink string) (*models.Article, error) {
+	var existing models.Article
+	db := global.DB.WithContext(ctx)
+
+	if normalizedLink != "" {
+		err := db.Where("link = ?", normalizedLink).First(&existing).Error
+		if err == nil {
+			return &existing, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+
+	if strings.TrimSpace(item.GUID) != "" {
+		err := db.Where("guid = ?", strings.TrimSpace(item.GUID)).First(&existing).Error
+		if err == nil {
+			return &existing, nil
+		}
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+
+	title := strings.TrimSpace(item.Title)
+	if title == "" {
+		return nil, gorm.ErrRecordNotFound
+	}
+
+	query := db.Where("source = ? AND title = ?", feed.Name, title)
+	if item.PublishedAt != nil {
+		query = query.Where("published_at = ?", *item.PublishedAt)
+	}
+
+	err := query.First(&existing).Error
+	if err == nil {
+		return &existing, nil
+	}
+	return nil, err
 }
 
 func ensureDefaultFeeds(ctx context.Context) error {
@@ -191,7 +306,7 @@ func parseAtom(data []byte) ([]rssItem, error) {
 	return items, nil
 }
 
-func fetchLatestFeedItem(ctx context.Context, feed models.RSSFeed) (*rssItem, error) {
+func fetchFeedItems(ctx context.Context, feed models.RSSFeed) ([]rssItem, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, feed.URL, nil)
 	if err != nil {
 		return nil, err
@@ -240,7 +355,11 @@ func fetchLatestFeedItem(ctx context.Context, feed models.RSSFeed) (*rssItem, er
 		return items[i].PublishedAt.After(*items[j].PublishedAt)
 	})
 
-	return &items[0], nil
+	if len(items) > maxRefreshItemsPerFeed {
+		items = items[:maxRefreshItemsPerFeed]
+	}
+
+	return items, nil
 }
 
 func CreateArticle(c *gin.Context) {
@@ -297,7 +416,7 @@ func GetArticles(c *gin.Context) {
 	c.JSON(http.StatusOK, articles)
 }
 
-// RefreshRSSArticles pulls the latest item from each configured RSS feed and inserts if new.
+// RefreshRSSArticles pulls a recent batch from each configured RSS feed and inserts only unseen items.
 func RefreshRSSArticles(c *gin.Context) {
 	ctx := c.Request.Context()
 
@@ -316,50 +435,49 @@ func RefreshRSSArticles(c *gin.Context) {
 	warnings := []string{}
 
 	for _, feed := range feeds {
-		item, err := fetchLatestFeedItem(ctx, feed)
+		items, err := fetchFeedItems(ctx, feed)
 		if err != nil {
 			warnings = append(warnings, feed.Name+": "+err.Error())
 			continue
 		}
-		if item == nil {
+		if len(items) == 0 {
 			continue
 		}
 
-		// Deduplicate by link or GUID
-		var existing models.Article
-		err = global.DB.WithContext(ctx).
-			Where("link = ? OR (guid <> '' AND guid = ?)", item.Link, item.GUID).
-			First(&existing).Error
-		if err == nil {
-			continue // already stored
-		}
-		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-			warnings = append(warnings, feed.Name+": "+err.Error())
-			continue
-		}
+		for _, item := range items {
+			normalizedLink := normalizeArticleLink(item.Link)
+			existing, err := findExistingArticle(ctx, feed, item, normalizedLink)
+			if err == nil && existing != nil {
+				continue // already stored
+			}
+			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+				warnings = append(warnings, feed.Name+": "+err.Error())
+				continue
+			}
 
-		cleanContent := sanitize(item.Description)
-		if cleanContent == "" {
-			cleanContent = item.Title
-		}
-		preview := truncate(cleanContent, 280)
+			cleanContent := sanitize(item.Description)
+			if cleanContent == "" {
+				cleanContent = item.Title
+			}
+			preview := truncate(cleanContent, 280)
 
-		newArticle := models.Article{
-			Title:       item.Title,
-			Content:     cleanContent,
-			Preview:     preview,
-			Source:      feed.Name,
-			SourceURL:   feed.URL,
-			Link:        item.Link,
-			GUID:        item.GUID,
-			PublishedAt: item.PublishedAt,
-		}
+			newArticle := models.Article{
+				Title:       item.Title,
+				Content:     cleanContent,
+				Preview:     preview,
+				Source:      feed.Name,
+				SourceURL:   feed.URL,
+				Link:        normalizedLink,
+				GUID:        item.GUID,
+				PublishedAt: item.PublishedAt,
+			}
 
-		if err := global.DB.WithContext(ctx).Create(&newArticle).Error; err != nil {
-			warnings = append(warnings, feed.Name+": "+err.Error())
-			continue
+			if err := global.DB.WithContext(ctx).Create(&newArticle).Error; err != nil {
+				warnings = append(warnings, feed.Name+": "+err.Error())
+				continue
+			}
+			inserted = append(inserted, newArticle)
 		}
-		inserted = append(inserted, newArticle)
 
 		now := time.Now()
 		_ = global.DB.WithContext(ctx).Model(&models.RSSFeed{}).

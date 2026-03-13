@@ -1,6 +1,7 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, useRef } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { tradingService, type AnalysisTask } from '../services/tradingService'
+import { AgentResultsModule } from './AgentResultsModule'
 import '../TradingAnalysis.css'
 
 interface TradingAnalysisProps {
@@ -11,21 +12,49 @@ interface TradingAnalysisProps {
 }
 
 export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl }: TradingAnalysisProps) {
+    const ACTIVE_TASK_STORAGE_KEY = 'fingoat_active_analysis_task_id'
     const [ticker, setTicker] = useState('')
     const [date, setDate] = useState(() => {
         const today = new Date()
         return today.toISOString().split('T')[0]
     })
     const [loading, setLoading] = useState(false)
+    const [taskActionLoading, setTaskActionLoading] = useState(false)
     const [error, setError] = useState('')
     const [currentTask, setCurrentTask] = useState<AnalysisTask | null>(null)
     const [previousAnalyses, setPreviousAnalyses] = useState<AnalysisTask[]>([])
+    const pollingTaskIdRef = useRef<string | null>(null)
+    const pollCancelledRef = useRef(false)
 
-    // Fetch previous analyses on mount
-    useEffect(() => {
-        loadPreviousAnalyses()
+    const persistActiveTask = useCallback((task: AnalysisTask | null) => {
+        if (!task || task.status === 'completed' || task.status === 'failed' || task.status === 'cancelled') {
+            localStorage.removeItem(ACTIVE_TASK_STORAGE_KEY)
+            return
+        }
+        localStorage.setItem(ACTIVE_TASK_STORAGE_KEY, task.task_id)
     }, [])
 
+    const applyTaskState = useCallback((task: AnalysisTask | null) => {
+        setCurrentTask((previousTask) => {
+            if (
+                task &&
+                previousTask &&
+                task.task_id === previousTask.task_id &&
+                !task.analysis_report &&
+                previousTask.analysis_report
+            ) {
+                return {
+                    ...task,
+                    analysis_report: previousTask.analysis_report,
+                }
+            }
+            return task
+        })
+        setLoading(task?.status === 'processing')
+        persistActiveTask(task)
+    }, [persistActiveTask])
+
+    // Fetch previous analyses on mount
     const loadPreviousAnalyses = useCallback(async () => {
         try {
             const result = await tradingService.listAnalyses()
@@ -35,6 +64,65 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
             console.error('Failed to load previous analyses:', err)
         }
     }, [])
+
+    useEffect(() => {
+        loadPreviousAnalyses()
+    }, [loadPreviousAnalyses])
+
+    useEffect(() => {
+        return () => {
+            pollCancelledRef.current = true
+        }
+    }, [])
+
+    const pollTask = useCallback(async (taskId: string) => {
+        pollingTaskIdRef.current = taskId
+        pollCancelledRef.current = false
+
+        while (!pollCancelledRef.current && pollingTaskIdRef.current === taskId) {
+            const latestTask = await tradingService.getAnalysisResult(taskId)
+            applyTaskState(latestTask)
+
+            if (latestTask.status === 'completed' || latestTask.status === 'failed' || latestTask.status === 'cancelled') {
+                pollingTaskIdRef.current = null
+                loadPreviousAnalyses()
+                return latestTask
+            }
+
+            await new Promise((resolve) => setTimeout(resolve, 8000))
+        }
+
+        return null
+    }, [applyTaskState, loadPreviousAnalyses])
+
+    const openTask = useCallback(async (taskId: string) => {
+        try {
+            setError('')
+            const task = await tradingService.getAnalysisResult(taskId)
+            applyTaskState(task)
+
+            if (task.status === 'processing') {
+                await pollTask(task.task_id)
+            } else {
+                pollingTaskIdRef.current = null
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to load analysis'
+            setError(message)
+
+            if (message.includes('401') || message.includes('Session')) {
+                onSessionExpired?.()
+            }
+        }
+    }, [applyTaskState, onSessionExpired, pollTask])
+
+    useEffect(() => {
+        const activeTaskId = localStorage.getItem(ACTIVE_TASK_STORAGE_KEY)
+        if (!activeTaskId) {
+            return
+        }
+        openTask(activeTaskId)
+    }, [openTask])
 
     const handleTickerChange = (e: ChangeEvent<HTMLInputElement>) => {
         setTicker(e.target.value.toUpperCase())
@@ -59,7 +147,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
 
         setError('')
         setLoading(true)
-        setCurrentTask(null)
+        applyTaskState(null)
 
         try {
             // Submit analysis request
@@ -70,20 +158,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 deep_think_llm: llmModel,
             }
             const task = await tradingService.requestAnalysis(ticker.trim(), date, llmConfig)
-            setCurrentTask(task)
-
-            // Start polling for results
-            await tradingService.pollAnalysisResult(
-                task.task_id,
-                (updatedTask) => {
-                    setCurrentTask(updatedTask)
-                },
-                120, // allow longer-running jobs (up to ~16 minutes with 8s interval)
-                8000 // poll every 8 seconds
-            )
-
-            // Reload previous analyses
-            loadPreviousAnalyses()
+            applyTaskState(task)
+            await pollTask(task.task_id)
         } catch (err) {
             const message = err instanceof Error ? err.message : 'Failed to analyze stock'
             setError(message)
@@ -92,7 +168,55 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 onSessionExpired?.()
             }
         } finally {
-            setLoading(false)
+            if (pollingTaskIdRef.current === null) {
+                setLoading(false)
+            }
+        }
+    }
+
+    const handleSelectRecentAnalysis = (taskId: string) => {
+        pollCancelledRef.current = true
+        pollingTaskIdRef.current = null
+        openTask(taskId)
+    }
+
+    const handleClearCurrentTask = () => {
+        pollCancelledRef.current = true
+        pollingTaskIdRef.current = null
+        applyTaskState(null)
+        setError('')
+    }
+
+    const handleCancelTask = async () => {
+        if (!currentTask) return
+
+        try {
+            setTaskActionLoading(true)
+            pollCancelledRef.current = true
+            pollingTaskIdRef.current = null
+            const task = await tradingService.cancelAnalysis(currentTask.task_id)
+            applyTaskState(task)
+            loadPreviousAnalyses()
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to terminate analysis')
+        } finally {
+            setTaskActionLoading(false)
+        }
+    }
+
+    const handleResumeTask = async () => {
+        if (!currentTask) return
+
+        try {
+            setTaskActionLoading(true)
+            setError('')
+            const task = await tradingService.resumeAnalysis(currentTask.task_id)
+            applyTaskState(task)
+            await pollTask(task.task_id)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to continue analysis')
+        } finally {
+            setTaskActionLoading(false)
         }
     }
 
@@ -107,6 +231,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 return '#22c55e'
             case 'failed':
                 return '#ef4444'
+            case 'cancelled':
+                return '#f97316'
             case 'processing':
                 return '#3b82f6'
             default:
@@ -134,20 +260,61 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
             <div className="analysis-result">
                 <div className="result-header">
                     <h3>{currentTask.ticker}</h3>
-                    <span
-                        className="status-badge"
-                        style={{ backgroundColor: getStatusColor(currentTask.status) }}
-                    >
-                        {currentTask.status.toUpperCase()}
-                    </span>
+                    <div className="result-header-actions">
+                        <span
+                            className="status-badge"
+                            style={{ backgroundColor: getStatusColor(currentTask.status) }}
+                        >
+                            {currentTask.status.toUpperCase()}
+                        </span>
+                        {(currentTask.status === 'pending' || currentTask.status === 'processing') && (
+                            <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={handleCancelTask}
+                                disabled={taskActionLoading}
+                            >
+                                Terminate
+                            </button>
+                        )}
+                        {(currentTask.status === 'failed' || currentTask.status === 'cancelled') && (
+                            <button
+                                type="button"
+                                className="secondary-button"
+                                onClick={handleResumeTask}
+                                disabled={taskActionLoading}
+                            >
+                                Continue
+                            </button>
+                        )}
+                        {currentTask.status !== 'processing' && (
+                            <button type="button" className="secondary-button" onClick={handleClearCurrentTask}>
+                                Back to Recent Analyses
+                            </button>
+                        )}
+                    </div>
                 </div>
 
+                {currentTask.status === 'pending' && (
+                    <>
+                        <div className="processing-indicator">
+                            <div className="spinner"></div>
+                            <p>{currentTask.ticker} is queued for analysis.</p>
+                            <small>Waiting for an available worker</small>
+                        </div>
+                        <AgentResultsModule task={currentTask} />
+                    </>
+                )}
+
                 {currentTask.status === 'processing' && (
-                    <div className="processing-indicator">
-                        <div className="spinner"></div>
-                        <p>Analyzing {currentTask.ticker}... This may take 2-5 minutes.</p>
-                        <small>Multi-agent analysis in progress</small>
-                    </div>
+                    <>
+                        <div className="processing-indicator">
+                            <div className="spinner"></div>
+                            <p>Analyzing {currentTask.ticker}... This may take 2-5 minutes.</p>
+                            <small>Multi-agent analysis in progress</small>
+                        </div>
+                        <AgentResultsModule task={currentTask} />
+                    </>
                 )}
 
                 {currentTask.status === 'completed' && currentTask.decision && (
@@ -174,9 +341,11 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             </div>
                         )}
 
+                        <AgentResultsModule task={currentTask} />
+
                         {currentTask.analysis_report && (
                             <details className="analysis-details">
-                                <summary>📊 View Detailed Analysis Report</summary>
+                                <summary>📊 View Raw Analysis Report</summary>
                                 <div className="report-content">
                                     <pre>{JSON.stringify(currentTask.analysis_report, null, 2)}</pre>
                                 </div>
@@ -186,10 +355,23 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 )}
 
                 {currentTask.status === 'failed' && (
-                    <div className="error-result">
-                        <p>❌ Analysis failed</p>
-                        {currentTask.error && <small>{currentTask.error}</small>}
-                    </div>
+                    <>
+                        <div className="error-result">
+                            <p>❌ Analysis failed</p>
+                            {currentTask.error && <small>{currentTask.error}</small>}
+                        </div>
+                        <AgentResultsModule task={currentTask} />
+                    </>
+                )}
+
+                {currentTask.status === 'cancelled' && (
+                    <>
+                        <div className="error-result">
+                            <p>⏹ Analysis cancelled</p>
+                            {currentTask.error && <small>{currentTask.error}</small>}
+                        </div>
+                        <AgentResultsModule task={currentTask} />
+                    </>
                 )}
             </div>
         )
@@ -239,7 +421,9 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             Analyzing...
                         </>
                     ) : (
-                        '🚀 Analyze Stock'
+                        <>
+                            <span className="rocket-icon">🚀</span> Analyze Stock
+                        </>
                     )}
                 </button>
             </form>
@@ -251,7 +435,12 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                     <h4>Recent Analyses</h4>
                     <div className="analyses-list">
                         {previousAnalyses.map((task) => (
-                            <div key={task.task_id} className="analysis-item">
+                            <button
+                                key={task.task_id}
+                                type="button"
+                                className="analysis-item"
+                                onClick={() => handleSelectRecentAnalysis(task.task_id)}
+                            >
                                 <div className="item-header">
                                     <strong>{task.ticker}</strong>
                                     <span style={{ color: getStatusColor(task.status), fontSize: '0.85em' }}>
@@ -267,14 +456,14 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                                     </div>
                                 )}
                                 <div className="item-meta-row">
-                                    <span className="item-date">{new Date(task.CreatedAt).toLocaleString()}</span>
+                                    <span className="item-date">{new Date(task.created_at).toLocaleString()}</span>
                                     {task.llm_provider && (
                                         <span className="item-provider">
                                             {task.llm_provider}{task.llm_model ? ` / ${task.llm_model}` : ''}
                                         </span>
                                     )}
                                 </div>
-                            </div>
+                            </button>
                         ))}
                     </div>
                 </div>

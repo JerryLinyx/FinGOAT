@@ -1,14 +1,15 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,500&display=swap');
+
 :root {
-  font-family: 'Inter', 'SF Pro Display', 'Segoe UI', system-ui, -apple-system,
-    BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
   line-height: 1.5;
   font-weight: 400;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: #eaf0ff;
-  color: #0b1f44;
+  background-color: #f3f1ed; /* Warm Gray from styleguide */
+  color: #1a1a14; /* Ink Black from styleguide */
 }
 
 *,
@@ -26,7 +27,7 @@ body,
 body {
   margin: 0;
   min-height: 100vh;
-  background-color: #eaf0ff;
+  background-color: #f3f1ed;
   overflow: hidden;
 }
 

@@ -15,6 +15,7 @@ from .alpha_vantage import (
     get_insider_transactions as get_alpha_vantage_insider_transactions,
     get_news as get_alpha_vantage_news
 )
+from .alpha_vantage_news import get_global_news as get_alpha_vantage_global_news
 from .alpha_vantage_common import AlphaVantageRateLimitError
 
 # Configuration and routing logic
@@ -57,9 +58,15 @@ TOOLS_CATEGORIES = {
 VENDOR_LIST = [
     "local",
     "yfinance",
+    "alpha_vantage",
     "openai",
     "google"
 ]
+
+TOOL_FALLBACKS = {
+    # Avoid silently routing macro news to OpenAI when a non-OpenAI vendor is selected.
+    "get_global_news": ["local"],
+}
 
 # Mapping of methods to their vendor-specific implementations
 VENDOR_METHODS = {
@@ -103,6 +110,7 @@ VENDOR_METHODS = {
         "local": [get_finnhub_news, get_reddit_company_news, get_google_news],
     },
     "get_global_news": {
+        "alpha_vantage": get_alpha_vantage_global_news,
         "openai": get_global_news_openai,
         "local": get_reddit_global_news
     },
@@ -151,10 +159,13 @@ def route_to_vendor(method: str, *args, **kwargs):
 
     # Get all available vendors for this method for fallback
     all_available_vendors = list(VENDOR_METHODS[method].keys())
-    
-    # Create fallback vendor list: primary vendors first, then remaining vendors as fallbacks
+    allowed_fallbacks = TOOL_FALLBACKS.get(method, all_available_vendors)
+
+    # Create fallback vendor list: primary vendors first, then allowed remaining vendors as fallbacks
     fallback_vendors = primary_vendors.copy()
     for vendor in all_available_vendors:
+        if vendor not in allowed_fallbacks:
+            continue
         if vendor not in fallback_vendors:
             fallback_vendors.append(vendor)
 
