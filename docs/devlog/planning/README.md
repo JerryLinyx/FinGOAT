@@ -18,5 +18,5 @@ This directory contains the active planning workspace for the current developmen
 
 ## Active cycle
 
-- Baseline: `v0.1.1`
+- Baseline: `v0.1.2`
 - In-progress target: `v0.2.0`

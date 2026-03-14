@@ -1,6 +1,6 @@
 # Service Boundaries
 
-Baseline: `v0.1.1`
+Baseline: `v0.1.2`
 
 ## Frontend
 

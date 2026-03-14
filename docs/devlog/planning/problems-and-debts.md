@@ -364,6 +364,81 @@ v0.1 以闭环优先，过程可解释性滞后。
 
 待解决（P1）。
 
+## P1-4 OpenClaw 路径与健康契约未完全收敛
+
+### 问题描述
+
+OpenClaw 当前同时存在：
+
+- workflow 侧的 execution-mode 接入路径
+- 前端本地直连 gateway 的 chat MVP 路径
+
+两条路径在依赖、部署和健康语义上尚未统一。
+
+### 影响范围 / 严重性
+
+- 本地可用性与远程部署可用性不一致
+- health 结果可能出现误导性 degraded
+- 团队协作时对“主路径”认知容易分叉
+
+### 如何定位
+
+- 检查 OpenClaw integration record 的 follow-up。
+- 对照 Go/Python/前端当前调用路径与健康聚合逻辑。
+
+### 最终根因
+
+OpenClaw 能力先以 MVP 方式并行落地，产品化单路径收敛尚未完成。
+
+### 如何解决
+
+- 固化 OpenClaw runtime 依赖契约。
+- 修正健康探针判定规则与错误语义。
+- 把 chat role binding 与 workflow execution config 打通。
+
+### 其他方案
+
+- 保持双路径并行（短期快，长期维护复杂）
+- 收敛为单产品路径（推荐）
+
+### 当前状态
+
+待解决（P1）。
+
+## P1-5 Feed 缺后台定时 ingest 调度
+
+### 问题描述
+
+当前 feed 已是 DB-first + smart refresh，但缺少后台定时 ingest 任务。
+
+### 影响范围 / 严重性
+
+- 数据新鲜度仍部分依赖用户触发 refresh
+- 非活跃时段缺乏主动更新
+
+### 如何定位
+
+- 检查 article ingest 逻辑与 `feed_ingest_runs` 数据模型。
+- 对照 backlog 与归档结论。
+
+### 最终根因
+
+v0.1.2 优先完成 ingest 链路重构与审计记录，调度层尚未接入。
+
+### 如何解决
+
+- 增加后台 scheduler（cron/worker）周期触发 ingest。
+- 沿用 `feed_ingest_runs` 做审计与失败回看。
+
+### 其他方案
+
+- 继续依赖 smart refresh + manual refresh（实现简单但不主动）
+- 增加后台定时调度（推荐）
+
+### 当前状态
+
+待解决（P1）。
+
 ## P2-1 前端模块边界不清晰
 
 ### 问题描述

@@ -1,179 +1,138 @@
 # Module Map
 
-本文档描述当前系统的核心模块、职责、输入输出、关键依赖和已知薄弱点。
+本文档描述当前主线（`v0.1.2`）核心模块、职责、输入输出、依赖和薄弱点。
 
 ## 1. Frontend
 
 - 位置：`frontend/`
-- 模块职责：用户交互、认证流程、文章流展示、分析任务提交、结果轮询与展示
-- 输入：
-  - 用户登录/注册表单
-  - ticker/date/模型配置
-  - 后端返回的文章与分析结果
-- 输出：
-  - 对 Go backend 的 HTTP 请求
-  - 用户可见的页面状态与分析结果
+- 模块职责：
+  - 认证与会话管理
+  - Dashboard / Feed / Chart / OpenClaw 页面
+  - 分析任务提交、轮询、cancel/resume
+  - 阶段化分析结果展示（优先 `stages`）
+- 关键输入：
+  - 用户表单与操作
+  - Go API 返回的任务/文章/图表数据
+- 关键输出：
+  - 对 Go API 的请求
+  - OpenClaw 本地聊天 MVP 的直连请求（仅本地）
 - 关键依赖：
   - Go backend API
   - 浏览器 localStorage
-- 与其他模块的关系：
-  - 仅通过 Go backend 访问业务能力
-  - 不直接调用 Python Trading Service
-- 当前实现状态：部分完成
+  - 本地 OpenClaw gateway（可选）
+- 当前状态：已形成可用产品壳层
 - 已知风险：
-  - `App.tsx` 职责过重
-  - 主线缺乏阶段透明度展示
+  - `App.tsx` 状态仍偏重
+  - OpenClaw chat 与 trading workflow 绑定尚未收敛
 
 ## 2. Go Backend
 
 - 位置：`backend/`
 - 模块职责：
-  - JWT 鉴权
-  - 业务 API 统一入口
-  - 文章/RSS 管理
-  - 分析任务持久化
-  - 协调 Python Trading Service
-- 输入：
+  - JWT 鉴权与业务 API 统一入口
+  - 交易任务创建、查询、cancel/resume、统计
+  - Redis 任务协调与 runtime 对账
+  - 文章/RSS DB-first 读取 + smart refresh 管理
+  - 交易与 OpenClaw 健康聚合
+- 关键输入：
   - 前端 HTTP 请求
-  - Python Trading Service 返回
-  - PostgreSQL/Redis 读写结果
-- 输出：
+  - Redis runtime/queue 数据
+  - PostgreSQL 持久数据
+- 关键输出：
   - 面向前端的 JSON API
-  - 分析任务与决策持久化记录
+  - 任务与决策持久化更新
 - 关键依赖：
   - PostgreSQL
   - Redis
-  - Python Trading Service
-- 与其他模块的关系：
-  - 是系统当前的业务控制层
-  - 面向前端屏蔽 Python 细节
-- 当前实现状态：已完成基础闭环
+  - Python trading service（health）
+  - OpenClaw gateway（health）
+- 当前状态：主业务编排层已成型
 - 已知风险：
-  - 和 Python 的契约偏弱类型
-  - 运行中状态依赖 Python
+  - 契约仍有动态 JSON 区域
+  - 运行态修复以请求触发为主
 
 ## 3. Python Trading Service
 
 - 位置：`langchain-v1/`
 - 模块职责：
-  - 接受分析请求
-  - 包装 TradingAgents
-  - 返回任务状态和分析结果
-- 输入：
-  - `ticker`
-  - `date`
-  - `llm_config`
-  - `data_vendor_config`
-- 输出：
-  - `task_id`
-  - `status`
-  - `decision`
-  - `analysis_report`
-- 关键依赖：
-  - TradingAgents
-  - LLM provider
-  - 外部金融数据源
-- 与其他模块的关系：
-  - 当前由 Go backend 内部调用
-- 当前实现状态：已完成
+  - Redis worker 消费分析任务
+  - 运行 TradingAgents 并持续写 checkpoint
+  - 生成 `stages` + `analysis_report` + `decision`
+  - worker 存活管理与健康输出
+- 关键输入：
+  - `task_id/user_id/ticker/date/execution_mode`
+  - `llm_config/data_vendor_config`
+- 关键输出：
+  - Redis runtime state
+  - 阶段结果 `stages`
+  - `analysis_report`（含 `__stages` 兼容数据）
+- 当前状态：运行时执行器已稳定
 - 已知风险：
-  - 任务状态存于进程内存
-  - 运行期与持久态边界不清晰
+  - 仍保留公共任务 API（边界重叠）
+  - OpenClaw 依赖在部分环境下可降级
 
 ## 4. TradingAgents Engine
 
 - 位置：`TradingAgents/`
 - 模块职责：
-  - 多 agent 图编排
-  - analyst/research/risk/trader 角色执行
-  - 数据工具调用
-  - 最终信号生成
-- 输入：
-  - 股票代码
-  - 分析日期
-  - LLM 配置
-  - vendor 配置
-- 输出：
-  - 完整 agent state
-  - 最终决策信号
+  - LangGraph 异步图编排
+  - analyst 并发 fan-out + downstream debate/risk workflow
+  - vendor 工具路由与阶段输出生成
+  - `execution_mode=openclaw` 下的 analyst 适配调用
 - 关键依赖：
   - LangGraph
-  - LLM provider abstraction
-  - tool routing
-- 与其他模块的关系：
-  - 是 Python Trading Service 的核心引擎层
-- 当前实现状态：已完成
+  - LLM provider routing
+  - vendor data tools
+  - OpenClaw adapter（按 execution_mode）
+- 当前状态：核心分析引擎可用
 - 已知风险：
-  - 输出结构标准化不足
-  - 图流程复杂度已开始上升
+  - 结构化输出标准仍需收紧
+  - vendor 级缓存与去重未系统化
 
-## 5. Data Vendor Routing
+## 5. OpenClaw Gateway
 
-- 位置：`TradingAgents/tradingagents/dataflows/`
+- 位置：`openclaw-gateway/`
 - 模块职责：
-  - 将逻辑工具映射到实际供应商
-  - 提供 fallback 路由
-- 输入：
-  - 逻辑方法名，如 `get_stock_data`
-  - 标准化参数
-- 输出：
-  - 供应商返回的数据文本或分析数据
-- 关键依赖：
-  - `yfinance`
-  - `alpha_vantage`
-  - `openai`
-  - `google`
-  - `local`
-- 与其他模块的关系：
-  - 被 TradingAgents 的工具层调用
-- 当前实现状态：已完成
+  - per-user analyst registry/bootstrap
+  - stage-run 接口
+  - 健康检查
+- 当前状态：已接入，支持本地 MVP 路径
 - 已知风险：
-  - 缓存和限流尚未系统化
+  - 运行依赖与部署契约尚未完全收敛
+  - 与前端聊天页的连接仍是 local-first 方案
 
 ## 6. Persistence Layer
 
 - 位置：`backend/models/` + `backend/config/`
 - 模块职责：
-  - 保存用户、文章、分析任务、决策
-- 输入：
-  - Go 业务层实体
-- 输出：
-  - 可查询的持久记录
-- 关键依赖：
-  - PostgreSQL
-  - GORM
-- 与其他模块的关系：
-  - 当前业务真相源候选层
-- 当前实现状态：已完成
+  - 持久化用户、文章、任务、决策、feed ingest run
+- 关键对象：
+  - `User`
+  - `Article`
+  - `RSSFeed`
+  - `TradingAnalysisTask`
+  - `TradingDecision`
+  - `FeedIngestRun`
+- 当前状态：持久化主干已可用
 - 已知风险：
-  - 运行态尚未纳入统一存储设计
+  - 跨服务 schema 管理仍需进一步硬化
 
 ## 7. Redis Layer
 
-- 位置：`backend/controllers/article_controller.go`、`backend/controllers/like_controller.go`
-- 模块职责：
-  - 当前用于文章缓存与点赞计数
-- 输入：
-  - 缓存 key
-  - 点赞 key
-- 输出：
-  - 缓存数据
-  - 计数值
-- 关键依赖：
-  - Redis
-- 与其他模块的关系：
-  - 目前是辅助层
-- 当前实现状态：部分完成
+- 主要职责：
+  - 任务队列与 processing 队列
+  - 任务 runtime 状态
+  - 文章缓存与点赞计数
+- 当前状态：已进入核心任务链路
 - 已知风险：
-  - 职责过轻，未进入核心任务链路
+  - vendor 级运行时缓存尚未建立
 
 ## 8. Infra And Entry
 
 - 位置：`docker-compose.yml`、`nginx/`、`k8s/`
 - 模块职责：
-  - 本地编排
-  - 统一入口反向代理
+  - 本地编排与服务入口
   - 部署方向预留
-- 当前实现状态：已完成基础部署形态
+- 当前状态：可支持本地联调与 MVP 运行
 - 已知风险：
-  - 与应用层配置治理尚未统一
+  - 生产/VM 配置规范与密钥治理仍需收敛

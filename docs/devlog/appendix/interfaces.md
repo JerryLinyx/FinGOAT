@@ -1,6 +1,6 @@
 # Interfaces
 
-本文档整理当前系统的关键接口，包括调用关系、输入输出格式、状态管理方式、当前问题和后续演进方向。
+本文档整理当前主线（`v0.1.2`）关键接口、调用关系、状态管理方式和后续演进方向。
 
 ## 1. Frontend -> Go Backend
 
@@ -9,11 +9,16 @@
 - `POST /api/auth/login`
 - `POST /api/auth/register`
 - `GET /api/articles`
-- `GET /api/articles/refresh`
+- `GET /api/articles?refresh=true`（smart refresh）
+- `GET /api/articles/refresh`（force ingest）
 - `POST /api/trading/analyze`
 - `GET /api/trading/analysis/:task_id`
+- `POST /api/trading/analysis/:task_id/cancel`
+- `POST /api/trading/analysis/:task_id/resume`
 - `GET /api/trading/analyses`
 - `GET /api/trading/stats`
+- `GET /api/trading/health`
+- `GET /api/trading/chart/:ticker`
 
 ### 调用方 / 被调用方
 
@@ -29,72 +34,96 @@
 
 - `ticker`
 - `date`
+- `execution_mode`（`default` / `openclaw`）
 - `llm_config`
+- `data_vendor_config`（可选）
+
+核心分析响应格式（已确认）：
+
+- `task_id`
+- `status`
+- `execution_mode`
+- `stages`（主展示契约）
+- `analysis_report`（兼容保留）
+- `decision`
 
 ### 状态管理方式
 
 - token 存在浏览器 localStorage
-- 分析结果靠前端轮询获取
+- 分析结果靠前端轮询 Go 获取
+- 前端优先消费 `stages`，回退到 `analysis_report`
 
 ### 当前问题
 
-- 错误结构不统一
-- 分析结果结构受内部 Go/Python 契约影响
-- 认证 header 契约存在不一致风险
+- 错误模型仍未完全统一
+- Go/Python 动态 JSON 区域仍有 schema 漂移风险
+- OpenClaw chat 仍是前端本地直连形态，不是统一产品 API 边界
 
 ### 后续演进方向
 
-- 统一错误模型
-- 统一 token 使用方式
-- 让前端看到显式的阶段状态和关键中间结果
+- 统一错误结构和状态语义
+- 收紧分析响应 schema
+- 保持 Go 单外部 API 边界
 
-## 2. Go Backend -> Python Trading Service
+## 2. Go <-> Redis（任务协调）
 
-### 主要接口
+### 主要键与结构
 
-- `POST /api/v1/analyze`
-- `POST /api/v1/analyze/sync`
-- `GET /api/v1/analysis/{task_id}`
-- `GET /api/v1/config`
-- `GET /health`
-
-### 调用方 / 被调用方
-
-- 调用方：Go backend
-- 被调用方：Python Trading Service
-
-### 输入输出格式
-
-- 输入：HTTP JSON
-- 输出：HTTP JSON
-
-Python 当前支持的配置输入（已确认）：
-
-- `llm_config`
-- `data_vendor_config`
+- `trading:analysis:queue`
+- `trading:analysis:processing`
+- `trading:analysis:runtime:{task_id}`
 
 ### 状态管理方式
 
-- Go 提交任务给 Python
-- Python 返回 `task_id`
-- Go 在任务未结束时回查 Python 状态
+- Go 创建任务并入队
+- Python worker 消费并写 runtime/checkpoint
+- Go 查询阶段对账 runtime 与 PostgreSQL 并回写终态
+- cancel/resume 会清理 queue + processing 残留 payload
 
 ### 当前问题
 
-- Go/Python 双重拥有任务状态
-- Go 使用弱类型 map 接收 Python 响应
-- 运行态状态不可靠
+- 对账修复主要由请求触发，后台 sweeper 尚未统一
 
-### 后续演进方向
+## 3. Python Trading Service <-> Redis（执行运行时）
 
-- Go 负责业务状态入口
-- Python 负责执行
-- Redis 负责运行态协调
-- 保持 REST，先收紧 schema
+### 主要职责
 
-## 3. TradingAgents -> Vendor Routing
+- 阻塞消费队列
+- 写运行态与阶段 checkpoint
+- 写终态结果（含 `stages` 与 `analysis_report`）
+- worker 健康与自恢复
+
+### 当前问题
+
+- 仍暴露 `/api/v1/analyze` 等任务接口，存在边界重叠历史包袱
+
+## 4. Go -> Python / OpenClaw Gateway（健康探针）
 
 ### 主要接口
+
+- Go -> Python: `GET /health`
+- Go -> OpenClaw gateway: `GET /health`
+- Go 对外健康聚合：`GET /api/trading/health`
+
+### 当前问题
+
+- OpenClaw runtime 在部分本地环境仍可能显示 `degraded`，部署契约需进一步收敛
+
+## 5. Frontend -> OpenClaw Gateway（本地聊天 MVP）
+
+当前是本地 MVP 路径，不是 Go 网关转发：
+
+- 浏览器直连本地 OpenClaw gateway（ws/http）
+- `agents.list`
+- `sessions.list`
+- `chat.history`
+- `chat.send`
+
+风险：该路径对本地环境依赖强，暂不适合作为远程 VM/生产标准形态。
+
+## 6. TradingAgents -> Vendor Routing
+
+### 主要工具接口
 
 - `get_stock_data`
 - `get_indicators`
@@ -107,80 +136,23 @@ Python 当前支持的配置输入（已确认）：
 - `get_insider_sentiment`
 - `get_insider_transactions`
 
-### 调用方 / 被调用方
-
-- 调用方：TradingAgents analyst nodes
-- 被调用方：vendor routing layer
-
-### 输入输出格式
-
-- 输入：Python 工具调用参数
-- 输出：字符串化数据、报表、文本分析输入
-
-### 状态管理方式
-
-- 当前主要是即时调用，没有统一共享状态
-
 ### 当前问题
 
-- 重复抓取
-- fallback 有了，但缓存和限流不足
-- 输出格式偏文本，后续可计算性不足
+- vendor 级去重、缓存、限流治理仍需系统化
 
-### 后续演进方向
-
-- 数据抓取去重
-- Redis 级共享缓存
-- vendor 调用限流与熔断
-
-## 4. Go Backend -> PostgreSQL / Redis
-
-### PostgreSQL
-
-- 调用方：Go backend
-- 主要对象：`User`、`Article`、`TradingAnalysisTask`、`TradingDecision`
-- 当前问题：运行态任务状态尚未纳入统一设计
-
-### Redis
-
-- 调用方：Go backend
-- 当前对象：文章缓存、点赞数
-- 当前问题：未承担任务主链路职责
-
-### 后续演进方向
-
-- PostgreSQL：继续作为持久业务真相源
-- Redis：扩展为任务协调层、运行态缓存层和共享数据层
-
-## 5. Nginx Reverse Proxy
-
-### 主要入口
-
-- `/api/` -> Go backend
-- `/trading/` -> Python trading service
-- `/` -> frontend
-
-### 当前问题
-
-- 当前路由本身合理，主要问题不在代理层，而在内部状态和契约设计
-
-## 6. 协议选择说明
+## 7. 协议选择说明
 
 ### 当前选择
 
-- Go/Python 继续使用 REST
+- Go/Python 保持 REST + Redis 协调
 
 ### 原因
 
-- 当前任务系统以异步轮询为主
-- 真正瓶颈是 LLM 与数据获取延迟，而不是协议开销
-- 当前首先要解决的是状态和 schema，而不是换协议
+- 当前瓶颈在状态治理和契约稳定，不在 RPC 协议本身
+- 任务系统已是异步队列模型，协议切换收益有限
 
-### 后续触发条件
+### 触发 gRPC 评估条件
 
-以下场景出现时，再考虑 gRPC：
-
-- 内部服务显著增加
-- 需要稳定 streaming
-- schema 漂移长期难控
-- 需要更严格的 IDL 驱动开发
+- 内部服务数量显著增加
+- 对强 streaming / IDL 约束有刚性需求
+- REST schema 漂移长期无法收敛

@@ -16,5 +16,5 @@ This directory is the working documentation area for ongoing development.
 
 ## Current baseline
 
-- Archived baseline version: `v0.1.1`
+- Archived baseline version: `v0.1.2`
 - Current planning target: `v0.2.0`

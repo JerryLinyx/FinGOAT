@@ -10,7 +10,7 @@
 - 数据设计：[../appendix/data-models.md](../appendix/data-models.md)
 - 问题与技术债：[./problems-and-debts.md](./problems-and-debts.md)
 
-## 1. 项目当前状态（v0.1.1 -> v0.2.0 进行中）
+## 1. 项目当前状态（v0.1.2 -> v0.2.0 进行中）
 
 ### 一句话概述
 
@@ -22,14 +22,16 @@
 - 交易分析主流程可用：`POST /api/trading/analyze` 发起、`GET /api/trading/analysis/:task_id` 轮询。
 - 任务运行态已从 Python 内存迁移到 Redis（队列 + runtime key），并保留 PostgreSQL 持久业务记录。
 - Go 已支持取消/继续：`POST /api/trading/analysis/:task_id/cancel`、`POST /api/trading/analysis/:task_id/resume`。
+- 分析请求已支持 `execution_mode`（`default` / `openclaw`），主响应已支持 `stages` 作为阶段主展示契约。
 - Python worker 已支持：
   - 阻塞队列消费与 processing 队列恢复
   - 运行态 checkpoint 持续写回
   - worker 存活检测与自动重启
 - 分析过程透明度已进入主线：
-  - `analysis_report.__stage_times`
-  - `analysis_report.__key_outputs`
+  - `stages`（主）
+  - `analysis_report.__stage_times/__key_outputs`（兼容）
   - 前端阶段视图与处理中间结果展示
+- 文章链路已切到 DB-first smart refresh，并记录 `feed_ingest_runs` 审计数据。
 - 认证 header 已统一为 Bearer 约定（前端补齐，后端兼容解析）。
 
 ### 当前版本的边界
@@ -39,6 +41,8 @@
 - Go/FastAPI 在“任务 API 对外暴露”层面仍有重叠，需要收敛为单外部入口。
 - 配置优先级（Go/Python/Docker）尚未形成统一规则文档和强约束。
 - 前端状态边界仍偏集中，`App.tsx` 拆分不彻底。
+- OpenClaw 仍存在“workflow 适配层 vs chat 本地直连 MVP”的双路径收敛问题。
+- feed 仍缺后台定时 ingest（当前以 smart refresh/manual 为主）。
 - `推断`：当前已具备 MVP 骨架，但在多环境稳定性和回归测试覆盖上仍处于“工程收敛期”。
 
 ## 2. 核心模块梳理
@@ -201,12 +205,14 @@
 - Go/FastAPI 对外任务 API 边界仍有重叠，存在绕过网关风险。
 - Go/Python 结果契约仍弱类型，结构演进存在运行时风险。
 - provider fidelity 的端到端回归尚未完全收口（DashScope 仍有待验证闭环）。
+- OpenClaw 运行依赖/健康契约在部分本地场景仍未完全稳定。
 
 ### P1
 
 - 配置优先级规则未统一（Go/Python/Docker 组合下可预期性不足）。
 - 前端状态边界仍有重耦合，扩展成本偏高。
 - 运行态修复机制以请求触发为主，后台治理能力可继续增强。
+- feed 缺少后台定时 ingest 调度能力。
 
 ### P2
 
@@ -251,7 +257,16 @@
 - 备选路线：env-only 或 file-only。
 - 选择原因：混合模式更符合当前团队开发节奏。
 
-### 方向 E：前端状态边界重构（P1）
+### 方向 E：OpenClaw 收敛治理（P1）
+
+- 为什么要做：当前 OpenClaw 有 workflow 与 chat 两条路径，部署与健康语义未统一。
+- 不足点：本地可运行不等于远程可部署，且 health 可能出现误导性 degraded。
+- 解决真实问题：降低集成歧义，明确“可运行/可部署/可观测”边界。
+- 设计路线：统一 gateway 依赖契约、修正健康判定、打通 chat role binding 与 workflow 配置。
+- 备选路线：保持本地 MVP 独立演化。
+- 选择原因：长期看必须回归单条产品化路径。
+
+### 方向 F：前端状态边界重构（P1）
 
 - 为什么要做：阶段化能力已上线，继续叠加功能会放大状态耦合成本。
 - 不足点：主容器承担过多职责。
@@ -260,7 +275,7 @@
 - 备选路线：维持现状继续堆功能。
 - 选择原因：现在拆分成本最低。
 
-### 方向 F：数据获取治理（P2）
+### 方向 G：数据获取治理（P2）
 
 - 为什么要做：vendor 调用成本和稳定性将成为规模瓶颈。
 - 不足点：去重、缓存、限流治理尚不系统。
@@ -269,7 +284,7 @@
 - 备选路线：只在单点工具函数做临时缓存。
 - 选择原因：系统级策略更可控，长期收益更高。
 
-### 方向 G：能力增强吸收（P2）
+### 方向 H：能力增强吸收（P2）
 
 - 为什么要做：`origin/rag_fund`、`origin/dev_gq2142` 仍有未吸收价值。
 - 不足点：主线质量增强能力还不完整。

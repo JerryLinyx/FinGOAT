@@ -127,3 +127,95 @@ Current scope:
 
 - this change covers article ingestion deduplication and recent-item backfill
 - broader vendor-level caching and deduplication for trading/dataflow calls remains a separate backlog item
+
+## Additional follow-up: smart feed refresh and article feed UI repair
+
+After the article module was moved into the dedicated `Feed` page, two separate problems showed up:
+
+- `Refresh Feed` semantics were still split across:
+  - a force-ingest endpoint
+  - a normal article-read endpoint
+- the feed UI rendered blank cards with fallback values such as:
+  - `SYSTEM`
+  - `INVALID DATE`
+  - repeated `BEAR`
+
+This exposed that the original article flow still mixed together:
+
+- external RSS ingestion
+- database-backed reads
+- frontend refresh behavior
+- UI-only fallback rendering
+
+### Final decision
+
+Keep the article feed DB-first.
+
+- normal feed reads come from the database
+- `refresh=true` becomes a *smart refresh*:
+  - check the most recent successful ingest run
+  - only pull RSS again when the last successful sync is older than a threshold
+  - otherwise return DB-backed articles immediately
+- manual force-ingest remains a separate management action
+
+### Implementation design
+
+- `backend/models/feed_ingest_run.go`
+  - added `FeedIngestRun` to persist ingest attempts with:
+    - `trigger`
+    - `status`
+    - `started_at`
+    - `finished_at`
+    - `new_count`
+    - `warning_count`
+    - `error`
+- `backend/config/migrate.go`
+  - added `FeedIngestRun` to database migrations
+- `backend/controllers/article_controller.go`
+  - extracted DB-backed article loading into `loadArticles(...)`
+  - added `getLastSuccessfulIngestAt(...)`
+  - added `shouldRunSmartRefresh(...)`
+  - added `runArticleIngest(...)` as the shared RSS ingest path
+  - changed `GET /api/articles?refresh=true` to:
+    - trigger ingest only when the last successful sync is stale
+    - otherwise return DB-backed results directly
+  - preserved `GET /api/articles/refresh` as a force-sync style endpoint
+  - added light result shuffling only on the no-sync refresh path so refreshes do not look frozen without becoming fully random
+- `frontend/src/components/FeedPage.tsx`
+  - changed feed refresh back to the unified smart-refresh route:
+    - `GET /api/articles?refresh=true`
+  - fixed auth header handling so the page no longer sent:
+    - `Authorization: Bearer Bearer <token>`
+  - added response normalization to map backend article fields such as:
+    - `Title`
+    - `Source`
+    - `PublishedAt`
+    - `CreatedAt`
+    into the camelCase fields expected by the React UI
+  - removed the fake sentiment fallback chip because there is no real article sentiment pipeline behind the feed cards
+
+### Testing and validation
+
+Validated locally with:
+
+```bash
+cd /Users/linyuxuan/workSpace/FinGOAT/backend && go test ./...
+cd /Users/linyuxuan/workSpace/FinGOAT/frontend && npm run build
+```
+
+Confirmed after restart:
+
+- the new `feed_ingest_runs` table exists in PostgreSQL
+- feed requests no longer bounce users back to login because of doubled `Bearer` prefixes
+- article cards can render real title/source/date values instead of blank placeholders
+
+### Outcome
+
+Status: implemented.
+
+Current article/feed behavior is now:
+
+- database-first for all normal reads
+- conditionally ingest on refresh when the cache is stale
+- auditable via ingest-run records
+- no misleading article sentiment labels in the feed UI

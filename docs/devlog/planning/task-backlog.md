@@ -35,8 +35,12 @@
   - Record: `records/2026-03-13-redis-worker-timeout.md`
 - [x] Expose worker liveness and auto-restart a dead trading worker thread
   - Record: `records/2026-03-13-redis-worker-timeout.md`
-- [x] Make Ollama with `llama3.2` the default provider/model across frontend and service defaults
+- [x] Make Ollama with `gemma3:1b` the default provider/model across frontend and service defaults
   - Record: `records/2026-03-13-ollama-default-model.md`
+- [x] Add `execution_mode` and OpenClaw-backed analyst routing while preserving LangGraph as the main trading orchestrator
+  - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
+- [x] Introduce a standalone OpenClaw gateway with per-user analyst registry and stage-run APIs
+  - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
 
 ## P1
 
@@ -66,8 +70,16 @@
   - Record: `records/2026-03-13-analysis-cancel-and-resume.md`
 - [x] Make terminate/resume clean Redis queue state and prevent duplicate task payloads
   - Record: `records/2026-03-13-analysis-cancel-and-resume.md`
+- [x] Promote stage-centric task responses (`stages`) to the primary frontend consumption model while keeping `analysis_report` transitional
+  - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
 - [ ] Define configuration precedence rules across Go, Python, and Docker
 - [ ] Refactor frontend state boundaries for auth, article feed, and analysis
+- [ ] Resolve OpenClaw runtime health/dependency contract so local available setups no longer report misleading degraded status
+  - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
+- [ ] Add a background scheduler for feed ingest (cron/worker) so feed freshness does not depend on manual refresh
+  - Record: `records/2026-03-13-rss-refresh-deduplication.md`
+- [ ] Connect OpenClaw Chat role binding with trading workflow execution config instead of keeping chat as isolated local MVP
+  - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
 
 ## P2
 
@@ -79,5 +91,13 @@
 - [x] Switch stock chart fetching to Alpha Vantage free-tier-compatible endpoints
   - Record: `records/2026-03-13-rss-refresh-deduplication.md`
 - [x] Redesign chart controls so bar interval and lookback window are not conflated
+  - Record: `records/2026-03-13-rss-refresh-deduplication.md`
+- [x] Rework feed refresh into a smart DB-first refresh that only ingests RSS when the last successful sync is stale
+  - Record: `records/2026-03-13-rss-refresh-deduplication.md`
+- [x] Track article ingest runs so feed refresh decisions and failures are auditable
+  - Record: `records/2026-03-13-rss-refresh-deduplication.md`
+- [x] Normalize article payload fields in the feed UI so title/source/date render correctly after moving articles into Feed
+  - Record: `records/2026-03-13-rss-refresh-deduplication.md`
+- [x] Remove misleading article sentiment tags from the feed UI when no sentiment pipeline exists
   - Record: `records/2026-03-13-rss-refresh-deduplication.md`
 - [ ] Add vendor fetch deduplication and runtime caching for expensive data calls
