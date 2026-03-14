@@ -2,6 +2,10 @@
 
 ## P0
 
+- [ ] Redesign user table for v0.2 account evolution (`email` uniqueness, password hash semantics, profile fields, migration compatibility)
+  - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
+- [ ] Add email-based auth flow (register/login) with backward-compatible migration path for existing username users
+  - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
 - [ ] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
   - Record: `records/2026-03-13-v020-kickoff-requirements.md`
 - [ ] Restrict or deprecate Python public task endpoints (`/api/v1/analyze`, `/api/v1/analysis/{task_id}`) from production exposure
@@ -44,6 +48,14 @@
 
 ## P1
 
+- [ ] Add user profile page and backend profile APIs (view/edit basic account information)
+  - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
+- [ ] Add user API key configuration page and secure backend contracts (provider-scoped key write/update without plaintext echo)
+  - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
+- [ ] Add chart query history panel (deduplicated symbol list, re-query pins symbol to top by recency)
+  - Record: `records/2026-03-13-chart-query-history-requirements.md`
+- [ ] Add TradingAgents duplicate-run guard in dashboard: prompt confirmation when same user re-runs same symbol on same analysis date
+  - Record: `records/2026-03-13-trading-analysis-duplicate-guard-requirements.md`
 - [ ] Remove stale frontend dev proxy path `/trading -> :8001` if frontend no longer calls Python APIs directly
   - Record: `records/2026-03-13-v020-kickoff-requirements.md`
 - [ ] Add boundary regression checks to prevent reintroducing direct frontend->Python or Go->Python analyze-path coupling
