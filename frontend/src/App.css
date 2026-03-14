@@ -709,7 +709,9 @@
   font-size: 0.9rem;
 }
 
-.config-group select {
+.config-group select,
+.config-group input[type='text'],
+.config-group input[type='number'] {
   border-radius: 6px;
   border: 1px solid var(--panel-border);
   padding: 0.75rem;

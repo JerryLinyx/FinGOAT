@@ -15,12 +15,20 @@ import (
 )
 
 const defaultTradingServiceURL = "http://localhost:8001"
+const defaultOpenClawGatewayURL = "http://localhost:8011"
 
 var tradingServiceURL = func() string {
 	if v := os.Getenv("TRADING_SERVICE_URL"); v != "" {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultTradingServiceURL
+}()
+
+var openClawGatewayURL = func() string {
+	if v := os.Getenv("OPENCLAW_GATEWAY_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultOpenClawGatewayURL
 }()
 
 var tradingHTTPClient = &http.Client{Timeout: 15 * time.Second}
@@ -80,6 +88,8 @@ func RequestAnalysis(c *gin.Context) {
 		return
 	}
 	req.TaskID = taskID
+	req.UserID = userID.(uint)
+	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
 
 	var llmProvider, llmModel, llmBaseURL string
 	if req.LLMConfig != nil {
@@ -104,6 +114,7 @@ func RequestAnalysis(c *gin.Context) {
 		Ticker:       req.Ticker,
 		AnalysisDate: req.Date,
 		Status:       "pending",
+		ExecutionMode: req.ExecutionMode,
 		Config:       configJSON,
 		LLMProvider:  llmProvider,
 		LLMModel:     llmModel,
@@ -122,6 +133,7 @@ func RequestAnalysis(c *gin.Context) {
 		Status:    "pending",
 		Ticker:    req.Ticker,
 		Date:      req.Date,
+		ExecutionMode: req.ExecutionMode,
 		CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339),
 	}
 
@@ -290,9 +302,19 @@ func CheckServiceHealth(c *gin.Context) {
 	var healthResp map[string]interface{}
 	json.Unmarshal(body, &healthResp)
 
+	openclawHealth := gin.H{
+		"status": "unavailable",
+	}
+	if gatewayResp, gatewayErr := tradingHTTPClient.Get(openClawGatewayURL + "/health"); gatewayErr == nil {
+		defer gatewayResp.Body.Close()
+		gatewayBody, _ := io.ReadAll(gatewayResp.Body)
+		_ = json.Unmarshal(gatewayBody, &openclawHealth)
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"status":          "healthy",
 		"trading_service": healthResp,
+		"openclaw_gateway": openclawHealth,
 	})
 }
 
@@ -331,6 +353,7 @@ func CancelAnalysis(c *gin.Context) {
 			Status:    "cancelled",
 			Ticker:    task.Ticker,
 			Date:      task.AnalysisDate,
+			ExecutionMode: normalizeExecutionMode(task.ExecutionMode),
 			CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
@@ -390,8 +413,10 @@ func ResumeAnalysis(c *gin.Context) {
 		return
 	}
 	req.TaskID = task.TaskID
+	req.UserID = task.UserID
 	req.Ticker = task.Ticker
 	req.Date = task.AnalysisDate
+	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
 
 	configJSON, err := marshalTaskConfig(req)
 	if err != nil {
@@ -412,6 +437,7 @@ func ResumeAnalysis(c *gin.Context) {
 		Status:    "pending",
 		Ticker:    task.Ticker,
 		Date:      task.AnalysisDate,
+		ExecutionMode: req.ExecutionMode,
 		CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339),
 	}
 

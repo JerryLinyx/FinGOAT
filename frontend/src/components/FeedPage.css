@@ -1,0 +1,192 @@
+.feed-page {
+  padding: 2rem 2.5rem;
+  max-width: 1600px;
+  margin: 0 auto;
+  height: 100vh;
+  overflow-y: auto;
+  box-sizing: border-box;
+}
+
+.feed-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+}
+
+.feed-header h1 {
+  font-family: 'Playfair Display', serif;
+  font-size: 2rem;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+}
+
+.feed-actions {
+  display: flex;
+  gap: 1rem;
+}
+
+/* Masonry Layout Container (Xiaohongshu style) */
+.feed-masonry {
+  column-count: 1;
+  column-gap: 1.5rem;
+  width: 100%;
+}
+
+@media (min-width: 768px) {
+  .feed-masonry {
+    column-count: 2;
+  }
+}
+
+@media (min-width: 1024px) {
+  .feed-masonry {
+    column-count: 3;
+  }
+}
+
+@media (min-width: 1440px) {
+  .feed-masonry {
+    column-count: 4;
+  }
+}
+
+/* Notion Bookmark Style Cards */
+.feed-card {
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin-bottom: 1.5rem;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  overflow: hidden;
+  transition: all 0.2s ease;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+}
+
+.feed-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 16px rgba(0, 0, 0, 0.06);
+  border-color: rgba(0, 0, 0, 0.15);
+}
+
+.app.theme-dark .feed-card:hover {
+  border-color: rgba(255, 255, 255, 0.15);
+}
+
+.feed-card-content {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.feed-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+}
+
+.feed-card-title {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.feed-card-preview {
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  margin: 0;
+}
+
+.feed-card-full {
+  font-size: 0.9rem;
+  color: var(--text-primary);
+  line-height: 1.6;
+  margin: 0;
+  padding-top: 0.5rem;
+  border-top: 1px solid var(--panel-border);
+}
+
+.feed-card-footer {
+  padding: 1rem 1.25rem;
+  background: var(--surface-soft);
+  border-top: 1px solid var(--panel-border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.feed-card-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  color: var(--accent);
+  text-decoration: none;
+  transition: opacity 0.2s;
+}
+
+.feed-card-link:hover {
+  opacity: 0.8;
+  text-decoration: underline;
+}
+
+.feed-interaction {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.feed-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  transition: color 0.2s;
+}
+
+.feed-btn:hover {
+  color: var(--text-primary);
+}
+
+.feed-btn.active {
+  color: #ff4757;
+}
+
+.feed-status {
+  text-align: center;
+  padding: 4rem 0;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.feed-error {
+  text-align: center;
+  padding: 2rem;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.1);
+  border-radius: 8px;
+  margin: 2rem 0;
+}

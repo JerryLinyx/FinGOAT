@@ -6,6 +6,7 @@ import (
 	"encoding/xml"
 	"errors"
 	"io"
+	"math/rand"
 	"net/url"
 	"net/http"
 	"regexp"
@@ -22,7 +23,9 @@ import (
 
 var cacheKey = "articles"
 var httpClient = &http.Client{Timeout: 10 * time.Second}
+
 const maxRefreshItemsPerFeed = 10
+const smartRefreshWindow = 15 * time.Minute
 
 type rssFeedDef struct {
 	Name string
@@ -84,6 +87,12 @@ var trackingQueryKeys = map[string]struct{}{
 	"source":  {},
 	"spm":     {},
 	"from":    {},
+}
+
+type articleIngestResult struct {
+	Inserted []models.Article
+	Warnings []string
+	Run      models.FeedIngestRun
 }
 
 func parseTimeString(value string) *time.Time {
@@ -368,7 +377,7 @@ func CreateArticle(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	if err := global.DB.AutoMigrate(&models.Article{}, &models.RSSFeed{}); err != nil {
+	if err := global.DB.AutoMigrate(&models.Article{}, &models.RSSFeed{}, &models.FeedIngestRun{}); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -385,115 +394,238 @@ func CreateArticle(c *gin.Context) {
 	c.JSON(http.StatusCreated, article)
 }
 
-func GetArticles(c *gin.Context) {
-
+func loadArticles(ctx context.Context, useCache bool) ([]models.Article, error) {
 	var articles []models.Article
-	ctx := c.Request.Context()
 
-	if cachedData, err := global.RedisDB.Get(ctx, cacheKey).Result(); err == nil {
-		if err := json.Unmarshal([]byte(cachedData), &articles); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+	if useCache {
+		if cachedData, err := global.RedisDB.Get(ctx, cacheKey).Result(); err == nil {
+			if err := json.Unmarshal([]byte(cachedData), &articles); err != nil {
+				return nil, err
+			}
+			return articles, nil
+		} else if err != redis.Nil {
+			return nil, err
 		}
-	} else if err == redis.Nil {
-		if err := global.DB.Order("COALESCE(published_at, created_at) DESC").Limit(50).Find(&articles).Error; err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
-		}
+	}
+
+	if err := global.DB.WithContext(ctx).
+		Order("COALESCE(published_at, created_at) DESC").
+		Limit(50).
+		Find(&articles).Error; err != nil {
+		return nil, err
+	}
+
+	if useCache {
 		articlesJSON, err := json.Marshal(articles)
+		if err != nil {
+			return nil, err
+		}
+		if err := global.RedisDB.Set(ctx, cacheKey, articlesJSON, 10*time.Minute).Err(); err != nil {
+			return nil, err
+		}
+	}
+
+	return articles, nil
+}
+
+func shuffleArticles(articles []models.Article) {
+	if len(articles) < 2 {
+		return
+	}
+	r := rand.New(rand.NewSource(time.Now().UnixNano()))
+	r.Shuffle(len(articles), func(i, j int) {
+		articles[i], articles[j] = articles[j], articles[i]
+	})
+}
+
+func getLastSuccessfulIngestAt(ctx context.Context) (*time.Time, error) {
+	var run models.FeedIngestRun
+	err := global.DB.WithContext(ctx).
+		Where("status IN ?", []string{"success", "partial_success"}).
+		Order("started_at DESC").
+		First(&run).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &run.StartedAt, nil
+}
+
+func shouldRunSmartRefresh(lastSuccessful *time.Time, now time.Time) bool {
+	if lastSuccessful == nil {
+		return true
+	}
+	return now.Sub(*lastSuccessful) >= smartRefreshWindow
+}
+
+func runArticleIngest(ctx context.Context, trigger string) (*articleIngestResult, error) {
+	result := &articleIngestResult{
+		Run: models.FeedIngestRun{
+			Trigger:   trigger,
+			Status:    "running",
+			StartedAt: time.Now(),
+		},
+	}
+
+	if err := global.DB.WithContext(ctx).Create(&result.Run).Error; err != nil {
+		return nil, err
+	}
+
+	finishRun := func(status string, errMsg string) {
+		finishedAt := time.Now()
+		result.Run.Status = status
+		result.Run.Error = errMsg
+		result.Run.WarningCount = len(result.Warnings)
+		result.Run.NewCount = len(result.Inserted)
+		result.Run.FinishedAt = &finishedAt
+		_ = global.DB.WithContext(context.Background()).
+			Model(&models.FeedIngestRun{}).
+			Where("id = ?", result.Run.ID).
+			Updates(map[string]interface{}{
+				"status":        result.Run.Status,
+				"error":         result.Run.Error,
+				"warning_count": result.Run.WarningCount,
+				"new_count":     result.Run.NewCount,
+				"finished_at":   result.Run.FinishedAt,
+			}).Error
+	}
+
+	if err := ensureDefaultFeeds(ctx); err != nil {
+		finishRun("failed", "failed to ensure default feeds: "+err.Error())
+		return result, err
+	}
+
+	var feeds []models.RSSFeed
+	if err := global.DB.WithContext(ctx).Where("active = ?", true).Find(&feeds).Error; err != nil {
+		finishRun("failed", err.Error())
+		return result, err
+	}
+
+	for _, feed := range feeds {
+		items, err := fetchFeedItems(ctx, feed)
+		now := time.Now()
+		if err != nil {
+			result.Warnings = append(result.Warnings, feed.Name+": "+err.Error())
+			_ = global.DB.WithContext(ctx).Model(&models.RSSFeed{}).
+				Where("id = ?", feed.ID).
+				Update("last_fetched", &now).Error
+			continue
+		}
+		if len(items) > 0 {
+			for _, item := range items {
+				normalizedLink := normalizeArticleLink(item.Link)
+				existing, err := findExistingArticle(ctx, feed, item, normalizedLink)
+				if err == nil && existing != nil {
+					continue
+				}
+				if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+					result.Warnings = append(result.Warnings, feed.Name+": "+err.Error())
+					continue
+				}
+
+				cleanContent := sanitize(item.Description)
+				if cleanContent == "" {
+					cleanContent = item.Title
+				}
+				preview := truncate(cleanContent, 280)
+
+				newArticle := models.Article{
+					Title:       item.Title,
+					Content:     cleanContent,
+					Preview:     preview,
+					Source:      feed.Name,
+					SourceURL:   feed.URL,
+					Link:        normalizedLink,
+					GUID:        item.GUID,
+					PublishedAt: item.PublishedAt,
+				}
+
+				if err := global.DB.WithContext(ctx).Create(&newArticle).Error; err != nil {
+					result.Warnings = append(result.Warnings, feed.Name+": "+err.Error())
+					continue
+				}
+				result.Inserted = append(result.Inserted, newArticle)
+			}
+		}
+
+		_ = global.DB.WithContext(ctx).Model(&models.RSSFeed{}).
+			Where("id = ?", feed.ID).
+			Update("last_fetched", &now).Error
+	}
+
+	go func() {
+		_ = global.RedisDB.Del(context.Background(), cacheKey).Err()
+	}()
+
+	status := "success"
+	if len(result.Warnings) > 0 {
+		status = "partial_success"
+	}
+	finishRun(status, "")
+	return result, nil
+}
+
+func GetArticles(c *gin.Context) {
+	ctx := c.Request.Context()
+	refreshRequested := strings.EqualFold(c.Query("refresh"), "true")
+	didSync := false
+	shuffleResult := false
+
+	if refreshRequested {
+		lastSuccessful, err := getLastSuccessfulIngestAt(ctx)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
-		if err := global.RedisDB.Set(ctx, cacheKey, articlesJSON, 10*time.Minute).Err(); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-			return
+
+		if shouldRunSmartRefresh(lastSuccessful, time.Now()) {
+			if _, err := runArticleIngest(ctx, "refresh"); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			didSync = true
+		} else {
+			shuffleResult = true
 		}
-	} else {
+	}
+
+	articles, err := loadArticles(ctx, !refreshRequested)
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+
+	if shuffleResult && !didSync {
+		shuffleArticles(articles)
+	}
+
 	c.JSON(http.StatusOK, articles)
 }
 
 // RefreshRSSArticles pulls a recent batch from each configured RSS feed and inserts only unseen items.
 func RefreshRSSArticles(c *gin.Context) {
 	ctx := c.Request.Context()
-
-	if err := ensureDefaultFeeds(ctx); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to ensure default feeds: " + err.Error()})
-		return
-	}
-
-	var feeds []models.RSSFeed
-	if err := global.DB.WithContext(ctx).Where("active = ?", true).Find(&feeds).Error; err != nil {
+	result, err := runArticleIngest(ctx, "manual")
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	inserted := []models.Article{}
-	warnings := []string{}
-
-	for _, feed := range feeds {
-		items, err := fetchFeedItems(ctx, feed)
-		if err != nil {
-			warnings = append(warnings, feed.Name+": "+err.Error())
-			continue
-		}
-		if len(items) == 0 {
-			continue
-		}
-
-		for _, item := range items {
-			normalizedLink := normalizeArticleLink(item.Link)
-			existing, err := findExistingArticle(ctx, feed, item, normalizedLink)
-			if err == nil && existing != nil {
-				continue // already stored
-			}
-			if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
-				warnings = append(warnings, feed.Name+": "+err.Error())
-				continue
-			}
-
-			cleanContent := sanitize(item.Description)
-			if cleanContent == "" {
-				cleanContent = item.Title
-			}
-			preview := truncate(cleanContent, 280)
-
-			newArticle := models.Article{
-				Title:       item.Title,
-				Content:     cleanContent,
-				Preview:     preview,
-				Source:      feed.Name,
-				SourceURL:   feed.URL,
-				Link:        normalizedLink,
-				GUID:        item.GUID,
-				PublishedAt: item.PublishedAt,
-			}
-
-			if err := global.DB.WithContext(ctx).Create(&newArticle).Error; err != nil {
-				warnings = append(warnings, feed.Name+": "+err.Error())
-				continue
-			}
-			inserted = append(inserted, newArticle)
-		}
-
-		now := time.Now()
-		_ = global.DB.WithContext(ctx).Model(&models.RSSFeed{}).
-			Where("id = ?", feed.ID).
-			Update("last_fetched", &now).Error
-	}
-
-	// Invalidate cached articles to reflect fresh entries
-	go func() {
-		_ = global.RedisDB.Del(context.Background(), cacheKey).Err()
-	}()
-
 	c.JSON(http.StatusOK, gin.H{
-		"inserted": len(inserted),
-		"articles": inserted,
-		"warnings": warnings,
+		"inserted": len(result.Inserted),
+		"articles": result.Inserted,
+		"warnings": result.Warnings,
+		"run": gin.H{
+			"id":            result.Run.ID,
+			"status":        result.Run.Status,
+			"trigger":       result.Run.Trigger,
+			"started_at":    result.Run.StartedAt,
+			"finished_at":   result.Run.FinishedAt,
+			"new_count":     result.Run.NewCount,
+			"warning_count": result.Run.WarningCount,
+		},
 	})
 }
 

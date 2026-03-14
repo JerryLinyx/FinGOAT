@@ -1,0 +1,555 @@
+.openclaw-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  color: var(--text-primary);
+}
+
+.openclaw-shell {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.card-surface {
+  background: var(--panel-bg);
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  box-shadow: var(--panel-shadow);
+}
+
+.openclaw-sidebar-top {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.openclaw-sidebar-title h2 {
+  font-family: 'Playfair Display', serif;
+  margin: 0.15rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.openclaw-eyebrow {
+  margin: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.openclaw-sidebar-desc,
+.openclaw-panel-copy {
+  margin: 0.75rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.4;
+}
+
+.openclaw-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.openclaw-status-pill--connected {
+  background: rgba(150, 171, 154, 0.15);
+  color: #5c6b60;
+  border: 1px solid rgba(150, 171, 154, 0.4);
+}
+
+.openclaw-status-pill--connecting {
+  background: rgba(209, 184, 142, 0.15);
+  color: #8c7651;
+  border: 1px solid rgba(209, 184, 142, 0.4);
+}
+
+.openclaw-status-pill--disconnected {
+  background: rgba(204, 75, 75, 0.08);
+  color: var(--error-red);
+  border: 1px solid rgba(204, 75, 75, 0.4);
+}
+
+.openclaw-status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.openclaw-sidebar-connect {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.openclaw-divider {
+  border: 0;
+  height: 1px;
+  background: var(--panel-border);
+  margin: 1.5rem 0;
+}
+
+.openclaw-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.openclaw-field span {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.openclaw-field input,
+.openclaw-role-card select,
+.openclaw-session-bar select,
+.openclaw-composer textarea {
+  width: 100%;
+  border: 1px solid var(--panel-border);
+  background: var(--surface-soft);
+  border-radius: 6px;
+  padding: 0.75rem;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  transition: all 0.2s ease;
+}
+
+.openclaw-field input:focus,
+.openclaw-role-card select:focus,
+.openclaw-session-bar select:focus,
+.openclaw-composer textarea:focus {
+  outline: none;
+  border-color: var(--ink-black);
+  box-shadow: 0 0 0 1px var(--ink-black);
+  background: var(--surface-soft);
+}
+
+.openclaw-composer textarea {
+  min-height: 110px;
+  resize: vertical;
+}
+
+.openclaw-connect-actions,
+.openclaw-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.openclaw-connect-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.openclaw-inline-error {
+  color: var(--error-red);
+  font-size: 0.8rem;
+  margin-top: 0.25rem;
+}
+
+.openclaw-button,
+.openclaw-link-button,
+.openclaw-role-tab {
+  border: none;
+  font: inherit;
+  cursor: pointer;
+}
+
+.openclaw-button {
+  border-radius: 6px;
+  padding: 0.5rem 0.85rem;
+  font-size: 0.85rem;
+  font-weight: 500;
+  background: var(--ink-black);
+  color: #fff;
+  box-shadow: 0 4px 6px rgba(26, 26, 20, 0.1);
+  transition: all 0.2s ease;
+}
+
+.openclaw-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.openclaw-button:not(:disabled):hover {
+  background: #33332d;
+  transform: translateY(-1px);
+  box-shadow: 0 6px 10px rgba(26, 26, 20, 0.15);
+}
+
+.openclaw-button:not(:disabled):focus-visible {
+  outline: 2px solid var(--ink-black);
+  outline-offset: 2px;
+}
+
+.openclaw-button--ghost {
+  background: transparent;
+  color: var(--text-primary);
+  border: 1px solid var(--panel-border);
+  box-shadow: none;
+}
+
+.openclaw-button--ghost:not(:disabled):hover {
+  background: var(--surface-soft);
+  color: var(--ink-black);
+  box-shadow: 0 4px 6px rgba(26, 26, 20, 0.05);
+}
+
+.openclaw-link-button {
+  background: transparent;
+  color: var(--text-secondary);
+  padding: 0;
+  font-weight: 500;
+  transition: color 0.2s ease;
+}
+
+.openclaw-link-button:hover {
+  color: var(--ink-black);
+}
+
+.openclaw-layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 360px) minmax(0, 1fr);
+  gap: 1.25rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.openclaw-sidebar,
+.openclaw-chat {
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.openclaw-panel-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.openclaw-title-with-info {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.openclaw-info-icon {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.openclaw-info-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.openclaw-info-icon:hover {
+  color: var(--text-primary);
+}
+
+.openclaw-info-icon::after {
+  content: attr(data-tooltip);
+  position: absolute;
+  top: 150%;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink-black);
+  color: #fff;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: normal;
+  width: max-content;
+  max-width: 260px;
+  opacity: 0;
+  visibility: hidden;
+  transition: all 0.2s ease;
+  pointer-events: none;
+  z-index: 100;
+  box-shadow: 0 4px 12px rgba(26, 26, 20, 0.2);
+  text-align: center;
+}
+
+.openclaw-info-icon:hover::after {
+  opacity: 1;
+  visibility: visible;
+  top: 130%;
+}
+
+.openclaw-panel-head h3 {
+  font-family: 'Playfair Display', serif;
+  margin: 0;
+  font-size: 1.4rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.openclaw-panel-head--spaced {
+  margin-top: 1.5rem;
+}
+
+.openclaw-role-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+}
+
+.openclaw-role-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  padding: 1rem;
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.openclaw-role-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.openclaw-role-copy strong {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.openclaw-role-copy span {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.openclaw-gate {
+  margin-top: 1.25rem;
+  padding: 0.85rem 1.2rem;
+  border-radius: 6px;
+  background: rgba(204, 75, 75, 0.08);
+  color: var(--error-red);
+  font-size: 0.9rem;
+  font-weight: 500;
+  border: 1px solid rgba(204, 75, 75, 0.4);
+}
+
+.openclaw-gate--ready {
+  background: rgba(150, 171, 154, 0.15);
+  color: #5c6b60;
+  border: 1px solid rgba(150, 171, 154, 0.4);
+}
+
+.openclaw-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.openclaw-agent-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  border: 1px solid var(--panel-border);
+  background: transparent;
+  transition: all 0.2s ease;
+}
+
+.openclaw-agent-chip--active {
+  border-color: var(--ink-black);
+  background: var(--surface-soft);
+}
+
+.openclaw-agent-chip-title {
+  font-weight: 500;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.openclaw-agent-chip-id {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.openclaw-role-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  margin-top: 1rem;
+  background: var(--surface-soft);
+  border-radius: 10px;
+  padding: 0.25rem;
+  width: max-content;
+}
+
+.openclaw-role-tab {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-weight: 600;
+  font-size: 0.88rem;
+  cursor: pointer;
+  padding: 0.5rem 1.1rem;
+  border-radius: 8px;
+  transition: all 0.2s ease;
+}
+
+.openclaw-role-tab:hover {
+  color: var(--text-primary);
+  background: var(--panel-bg);
+}
+
+.openclaw-role-tab--active {
+  background: var(--ink-black);
+  color: #fff;
+  box-shadow: 0 2px 6px rgba(26, 26, 20, 0.12);
+}
+
+.openclaw-role-tab--active:hover {
+  background: #33332d;
+  color: #fff;
+}
+
+.openclaw-session-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 1rem;
+  align-items: end;
+  padding: 1rem 0 1.25rem;
+}
+
+.openclaw-session-bar strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.openclaw-session-bar p {
+  margin: 0.25rem 0 0;
+  font-size: 0.85rem;
+  color: var(--muted);
+  word-break: break-all;
+}
+
+.openclaw-chat-gate,
+.openclaw-chat-empty {
+  display: grid;
+  place-items: center;
+  flex: 1;
+  min-height: 0;
+  border-radius: 6px;
+  border: 1px dashed rgba(26, 26, 20, 0.15);
+  color: var(--text-secondary);
+  text-align: center;
+  padding: 1.5rem;
+  background: var(--surface-soft);
+}
+
+.openclaw-message-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  flex: 1;
+  min-height: 0;
+  padding: 0.25rem;
+  overflow-y: auto;
+}
+
+.openclaw-message-list::-webkit-scrollbar {
+  width: 4px;
+}
+.openclaw-message-list::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 999px;
+}
+
+.openclaw-message {
+  max-width: min(720px, 86%);
+  padding: 1rem 1.25rem;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  line-height: 1.55;
+  border: 1px solid var(--panel-border);
+}
+
+.openclaw-message header {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.openclaw-message header strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.openclaw-message--assistant,
+.openclaw-message--system {
+  align-self: flex-start;
+  background: var(--surface-soft);
+}
+
+.openclaw-message--user {
+  align-self: flex-end;
+  background: rgba(26, 26, 20, 0.04);
+}
+
+.openclaw-message--streaming {
+  border: 1px dashed var(--muted-sage);
+}
+
+.openclaw-composer {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  flex-shrink: 0;
+}
+
+.openclaw-composer-actions {
+  justify-content: space-between;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+@media (max-width: 1100px) {
+  .openclaw-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .openclaw-session-bar {
+    grid-template-columns: 1fr;
+  }
+}

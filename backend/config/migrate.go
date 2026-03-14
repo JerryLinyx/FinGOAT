@@ -12,6 +12,7 @@ func MigrateDB() {
 	err := global.DB.AutoMigrate(
 		&models.User{},
 		&models.Article{},
+		&models.FeedIngestRun{},
 		&models.ExchangeRate{},
 		&models.TradingAnalysisTask{},
 		&models.TradingDecision{},

@@ -14,6 +14,7 @@ type TradingAnalysisTask struct {
 	Ticker                string     `gorm:"type:varchar(10);not null" json:"ticker"`
 	AnalysisDate          string     `gorm:"type:varchar(20);not null" json:"analysis_date"`
 	Status                string     `gorm:"type:varchar(20);not null" json:"status"` // pending/processing/completed/failed
+	ExecutionMode         string     `gorm:"type:varchar(20);not null;default:'default'" json:"execution_mode"`
 	Config                *string    `gorm:"type:jsonb" json:"config,omitempty"`
 	LLMProvider           string     `gorm:"type:varchar(50)" json:"llm_provider,omitempty"`
 	LLMModel              string     `gorm:"type:varchar(100)" json:"llm_model,omitempty"`

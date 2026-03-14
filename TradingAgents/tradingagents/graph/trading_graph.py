@@ -34,6 +34,7 @@ from tradingagents.agents.utils.agent_utils import (
 )
 
 from tradingagents.llm_provider import build_llm
+from tradingagents.openclaw import OpenClawAnalystAdapter
 from .conditional_logic import ConditionalLogic
 from .setup import GraphSetup
 from .propagation import Propagator
@@ -95,6 +96,8 @@ class TradingAgentsGraph:
             self.invest_judge_memory,
             self.risk_manager_memory,
             self.conditional_logic,
+            self.config,
+            OpenClawAnalystAdapter(self.config),
         )
 
         self.propagator = Propagator()

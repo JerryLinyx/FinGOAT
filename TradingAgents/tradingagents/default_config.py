@@ -16,6 +16,8 @@ DEFAULT_CONFIG = {
     "llm_timeout": int(os.getenv("LLM_TIMEOUT", "60")),
     "llm_temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "llm_api_key": os.getenv("LLM_API_KEY"),  # optional override; otherwise provider-specific envs are used
+    "execution_mode": os.getenv("TRADING_EXECUTION_MODE", "default"),
+    "openclaw_gateway_url": os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:8011"),
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

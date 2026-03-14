@@ -12,12 +12,29 @@ const withBearerToken = (token: string | null): string => {
 export interface AnalysisRequest {
     ticker: string
     date: string
+    execution_mode?: 'default' | 'openclaw'
     llm_config?: {
         provider?: string
         base_url?: string
         deep_think_llm?: string
         quick_think_llm?: string
     }
+}
+
+export interface AnalysisStage {
+    stage_id: string
+    label: string
+    status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+    backend: string
+    summary?: string | null
+    content?: unknown
+    agent_id?: string | null
+    session_key?: string | null
+    raw_output?: unknown
+    started_at?: string | null
+    completed_at?: string | null
+    duration_seconds?: number
+    error?: string | null
 }
 
 export interface TradingDecision {
@@ -34,7 +51,9 @@ export interface AnalysisTask {
     ticker: string
     analysis_date: string
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
+    execution_mode: 'default' | 'openclaw'
     decision?: TradingDecision
+    stages?: AnalysisStage[]
     analysis_report?: Record<string, unknown>
     error?: string
     completed_at?: string
@@ -81,11 +100,16 @@ class TradingService {
         }
     }
 
-    async requestAnalysis(ticker: string, date: string, llmConfig?: AnalysisRequest['llm_config']): Promise<AnalysisTask> {
+    async requestAnalysis(
+        ticker: string,
+        date: string,
+        llmConfig?: AnalysisRequest['llm_config'],
+        executionMode: AnalysisRequest['execution_mode'] = 'default',
+    ): Promise<AnalysisTask> {
         const response = await fetch(`${API_BASE_URL}/api/trading/analyze`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
-            body: JSON.stringify({ ticker, date, llm_config: llmConfig }),
+            body: JSON.stringify({ ticker, date, execution_mode: executionMode, llm_config: llmConfig }),
         })
 
         if (!response.ok) {

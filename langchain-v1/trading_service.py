@@ -16,6 +16,8 @@ import uuid
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, List, Optional
+from urllib import error as urllib_error
+from urllib import request as urllib_request
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, status
@@ -84,6 +86,11 @@ class TaskStatus(str, Enum):
     CANCELLED = "cancelled"
 
 
+class ExecutionMode(str, Enum):
+    DEFAULT = "default"
+    OPENCLAW = "openclaw"
+
+
 class TradingAction(str, Enum):
     BUY = "BUY"
     SELL = "SELL"
@@ -109,8 +116,10 @@ class DataVendorConfig(BaseModel):
 
 class AnalysisRequest(BaseModel):
     task_id: Optional[str] = Field(default=None, description="Optional externally supplied task id")
+    user_id: Optional[int] = Field(default=None, description="Authenticated user id for per-user agent routing")
     ticker: str = Field(..., description="Stock ticker symbol", example="NVDA")
     date: str = Field(..., description="Analysis date in YYYY-MM-DD format", example="2024-05-10")
+    execution_mode: ExecutionMode = Field(default=ExecutionMode.DEFAULT, description="Execution backend mode")
     llm_config: Optional[LLMConfig] = Field(default=None, description="LLM configuration")
     data_vendor_config: Optional[DataVendorConfig] = Field(default=None, description="Data vendor configuration")
 
@@ -156,12 +165,30 @@ class TradingDecision(BaseModel):
     raw_decision: Optional[Dict[str, Any]] = None
 
 
+class StageResult(BaseModel):
+    stage_id: str
+    label: str
+    status: str
+    backend: str
+    summary: Optional[str] = None
+    content: Optional[Any] = None
+    agent_id: Optional[str] = None
+    session_key: Optional[str] = None
+    raw_output: Optional[Any] = None
+    started_at: Optional[str] = None
+    completed_at: Optional[str] = None
+    duration_seconds: Optional[float] = None
+    error: Optional[str] = None
+
+
 class AnalysisResponse(BaseModel):
     task_id: str
     status: TaskStatus
     ticker: str
     date: str
+    execution_mode: ExecutionMode = ExecutionMode.DEFAULT
     decision: Optional[TradingDecision] = None
+    stages: List[StageResult] = Field(default_factory=list)
     analysis_report: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     created_at: str
@@ -175,6 +202,7 @@ class HealthResponse(BaseModel):
     version: str
     timestamp: str
     worker_alive: bool
+    openclaw_gateway: Dict[str, Any] = Field(default_factory=dict)
 
 
 def utcnow_iso() -> str:
@@ -267,6 +295,20 @@ def close_redis_clients() -> None:
     reset_redis_clients()
 
 
+def fetch_openclaw_gateway_health() -> Dict[str, Any]:
+    gateway_url = os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:8011").rstrip("/")
+    try:
+        with urllib_request.urlopen(f"{gateway_url}/health", timeout=3) as response:
+            payload = response.read().decode("utf-8")
+        return json.loads(payload)
+    except (urllib_error.URLError, TimeoutError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "status": "unavailable",
+            "error": f"openclaw_gateway_unavailable: {exc}",
+            "url": gateway_url,
+        }
+
+
 def save_task_state(task_state: Dict[str, Any]) -> None:
     client = get_redis_client()
     client.set(
@@ -291,14 +333,21 @@ def register_recent_task(task_id: str) -> None:
     client.ltrim(RECENT_TASKS_KEY, 0, RECENT_TASK_LIMIT-1)
 
 
-def create_task_state(task_id: str, ticker: str, date: str) -> Dict[str, Any]:
+def create_task_state(
+    task_id: str,
+    ticker: str,
+    date: str,
+    execution_mode: ExecutionMode = ExecutionMode.DEFAULT,
+) -> Dict[str, Any]:
     return {
         "task_id": task_id,
         "status": TaskStatus.PENDING.value,
         "cancel_requested": False,
         "ticker": ticker,
         "date": date,
+        "execution_mode": execution_mode.value,
         "decision": None,
+        "stages": [],
         "analysis_report": None,
         "error": None,
         "created_at": utcnow_iso(),
@@ -307,29 +356,21 @@ def create_task_state(task_id: str, ticker: str, date: str) -> Dict[str, Any]:
     }
 
 
-STAGE_ORDER = [
-    "market_report",
-    "sentiment_report",
-    "news_report",
-    "fundamentals_report",
-    "investment_debate_state",
-    "investment_plan",
-    "trader_investment_plan",
-    "risk_debate_state",
-    "final_trade_decision",
+STAGE_DEFINITIONS = [
+    {"stage_id": "market", "report_key": "market_report", "label": "Technical"},
+    {"stage_id": "social", "report_key": "sentiment_report", "label": "Social Media"},
+    {"stage_id": "news", "report_key": "news_report", "label": "News"},
+    {"stage_id": "fundamentals", "report_key": "fundamentals_report", "label": "Fundamentals"},
+    {"stage_id": "research_debate", "report_key": "investment_debate_state", "label": "Research Debate"},
+    {"stage_id": "portfolio_manager", "report_key": "investment_plan", "label": "Portfolio Manager"},
+    {"stage_id": "trader_plan", "report_key": "trader_investment_plan", "label": "Trader Plan"},
+    {"stage_id": "risk_debate", "report_key": "risk_debate_state", "label": "Risk Debate"},
+    {"stage_id": "risk_management", "report_key": "final_trade_decision", "label": "Risk Management"},
 ]
 
-STAGE_LABELS = {
-    "market_report": "Technical",
-    "sentiment_report": "Social Media",
-    "news_report": "News",
-    "fundamentals_report": "Fundamentals",
-    "investment_debate_state": "Research Debate",
-    "investment_plan": "Portfolio Manager",
-    "trader_investment_plan": "Trader Plan",
-    "risk_debate_state": "Risk Debate",
-    "final_trade_decision": "Risk Management",
-}
+STAGE_ORDER = [stage["report_key"] for stage in STAGE_DEFINITIONS]
+STAGE_LABELS = {stage["report_key"]: stage["label"] for stage in STAGE_DEFINITIONS}
+STAGE_IDS_BY_REPORT_KEY = {stage["report_key"]: stage["stage_id"] for stage in STAGE_DEFINITIONS}
 
 NODE_STAGE_MAP = {
     "Market Analyst": "market_report",
@@ -349,6 +390,10 @@ NODE_STAGE_MAP = {
 
 def build_config(request: AnalysisRequest) -> Dict[str, Any]:
     config = DEFAULT_CONFIG.copy()
+    config["execution_mode"] = request.execution_mode.value
+    config["task_id"] = request.task_id
+    config["user_id"] = request.user_id
+    config["openclaw_gateway_url"] = os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:8011").rstrip("/")
 
     if request.llm_config:
         config["deep_think_llm"] = request.llm_config.deep_think_llm
@@ -506,7 +551,104 @@ def extract_key_outputs(report: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     return key_outputs
 
 
-def extract_analysis_report(state: Any, total_elapsed: Optional[float] = None) -> Dict[str, Any]:
+def extract_stage_metadata(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    metadata: Dict[str, Dict[str, Any]] = {}
+    field_prefixes = {
+        "__stage_backend.": "backend",
+        "__stage_agent_id.": "agent_id",
+        "__stage_session_key.": "session_key",
+        "__stage_raw_output.": "raw_output",
+        "__stage_summary.": "summary",
+        "__stage_started_at.": "started_at",
+        "__stage_completed_at.": "completed_at",
+        "__stage_error.": "error",
+    }
+
+    for key, value in state.items():
+        if not isinstance(key, str):
+            continue
+        for prefix, field_name in field_prefixes.items():
+            if not key.startswith(prefix):
+                continue
+            stage_key = key[len(prefix):]
+            metadata.setdefault(stage_key, {})[field_name] = make_json_safe(value)
+            break
+
+    return metadata
+
+
+def build_stage_results(
+    state: Dict[str, Any],
+    *,
+    task_status: str,
+    total_elapsed: Optional[float] = None,
+    execution_mode: str = ExecutionMode.DEFAULT.value,
+    task_error: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    stage_times = extract_stage_times(state, total_elapsed)
+    stage_meta = extract_stage_metadata(state)
+    content_by_stage = {stage["report_key"]: state.get(stage["report_key"]) for stage in STAGE_DEFINITIONS}
+    first_missing_index = next(
+        (index for index, stage in enumerate(STAGE_DEFINITIONS) if not _has_meaningful_content(content_by_stage[stage["report_key"]])),
+        -1,
+    )
+
+    results: List[Dict[str, Any]] = []
+    for index, stage in enumerate(STAGE_DEFINITIONS):
+        report_key = stage["report_key"]
+        content = make_json_safe(content_by_stage[report_key])
+        has_content = _has_meaningful_content(content_by_stage[report_key])
+        meta = stage_meta.get(report_key, {})
+
+        stage_status = TaskStatus.PENDING.value
+        if task_status == TaskStatus.FAILED.value:
+            active_index = len(STAGE_DEFINITIONS) - 1 if first_missing_index == -1 else first_missing_index
+            stage_status = TaskStatus.COMPLETED.value if has_content else (
+                TaskStatus.FAILED.value if index == active_index else TaskStatus.PENDING.value
+            )
+        elif task_status == TaskStatus.CANCELLED.value:
+            active_index = len(STAGE_DEFINITIONS) - 1 if first_missing_index == -1 else first_missing_index
+            stage_status = TaskStatus.COMPLETED.value if has_content else (
+                TaskStatus.CANCELLED.value if index == active_index else TaskStatus.PENDING.value
+            )
+        elif has_content:
+            stage_status = TaskStatus.COMPLETED.value
+        elif task_status == TaskStatus.PROCESSING.value:
+            active_index = len(STAGE_DEFINITIONS) - 1 if first_missing_index == -1 else first_missing_index
+            stage_status = TaskStatus.PROCESSING.value if index == active_index else TaskStatus.PENDING.value
+
+        results.append(
+            {
+                "stage_id": stage["stage_id"],
+                "label": stage["label"],
+                "status": stage_status,
+                "backend": meta.get("backend") or (
+                    ExecutionMode.OPENCLAW.value if execution_mode == ExecutionMode.OPENCLAW.value and stage["stage_id"] in {"market", "social", "news", "fundamentals"}
+                    else ExecutionMode.DEFAULT.value
+                ),
+                "summary": meta.get("summary") or _normalize_summary_text(content),
+                "content": content if content is not None else None,
+                "agent_id": meta.get("agent_id"),
+                "session_key": meta.get("session_key"),
+                "raw_output": meta.get("raw_output"),
+                "started_at": meta.get("started_at"),
+                "completed_at": meta.get("completed_at"),
+                "duration_seconds": stage_times.get(report_key),
+                "error": meta.get("error") if meta.get("error") else (task_error if stage_status in {TaskStatus.FAILED.value, TaskStatus.CANCELLED.value} else None),
+            }
+        )
+
+    return results
+
+
+def extract_analysis_report(
+    state: Any,
+    total_elapsed: Optional[float] = None,
+    *,
+    task_status: str = TaskStatus.PROCESSING.value,
+    execution_mode: str = ExecutionMode.DEFAULT.value,
+    task_error: Optional[str] = None,
+) -> Dict[str, Any]:
     report: Dict[str, Any] = {}
 
     try:
@@ -535,6 +677,13 @@ def extract_analysis_report(state: Any, total_elapsed: Optional[float] = None) -
             key_outputs = extract_key_outputs(report)
             if key_outputs:
                 report["__key_outputs"] = key_outputs
+            report["__stages"] = build_stage_results(
+                state,
+                task_status=task_status,
+                total_elapsed=total_elapsed,
+                execution_mode=execution_mode,
+                task_error=task_error,
+            )
         else:
             report = {"raw_state": make_json_safe(state)}
     except Exception as exc:
@@ -548,13 +697,19 @@ def update_processing_checkpoint(
     task_state: Dict[str, Any],
     state: Dict[str, Any],
     start_time: datetime,
+    execution_mode: str,
 ) -> bool:
     latest_state = load_task_state(task_state["task_id"])
     if latest_state and latest_state.get("status") == TaskStatus.CANCELLED.value:
         raise TaskCancelledError("analysis cancelled by user")
 
     elapsed = max((datetime.now(timezone.utc) - start_time).total_seconds(), 0.0)
-    analysis_report = extract_analysis_report(state, elapsed)
+    analysis_report = extract_analysis_report(
+        state,
+        elapsed,
+        task_status=TaskStatus.PROCESSING.value,
+        execution_mode=execution_mode,
+    )
     if not analysis_report:
         return False
 
@@ -564,6 +719,8 @@ def update_processing_checkpoint(
     task_state.update(
         {
             "status": TaskStatus.PROCESSING.value,
+            "execution_mode": execution_mode,
+            "stages": analysis_report.get("__stages", []),
             "analysis_report": analysis_report,
             "processing_time_seconds": elapsed,
             "error": None,
@@ -579,7 +736,7 @@ class TaskCancelledError(RuntimeError):
 
 def enqueue_analysis_request(request: AnalysisRequest) -> Dict[str, Any]:
     task_id = request.task_id or str(uuid.uuid4())
-    task_state = create_task_state(task_id, request.ticker, request.date)
+    task_state = create_task_state(task_id, request.ticker, request.date, request.execution_mode)
     payload = model_dump_compat(request)
     payload["task_id"] = task_id
 
@@ -591,7 +748,12 @@ def enqueue_analysis_request(request: AnalysisRequest) -> Dict[str, Any]:
 
 
 def run_analysis(task_id: str, request: AnalysisRequest) -> None:
-    task_state = load_task_state(task_id) or create_task_state(task_id, request.ticker, request.date)
+    task_state = load_task_state(task_id) or create_task_state(
+        task_id,
+        request.ticker,
+        request.date,
+        request.execution_mode,
+    )
 
     try:
         if task_state.get("status") == TaskStatus.CANCELLED.value:
@@ -602,6 +764,7 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
 
         task_state["status"] = TaskStatus.PROCESSING.value
         task_state["cancel_requested"] = False
+        task_state["execution_mode"] = request.execution_mode.value
         save_task_state(task_state)
 
         start_time = datetime.now(timezone.utc)
@@ -611,7 +774,12 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
         state, decision = trading_graph.propagate(
             request.ticker,
             request.date,
-            progress_callback=lambda snapshot: update_processing_checkpoint(task_state, snapshot, start_time),
+            progress_callback=lambda snapshot: update_processing_checkpoint(
+                task_state,
+                snapshot,
+                start_time,
+                request.execution_mode.value,
+            ),
         )
 
         latest_state = load_task_state(task_id)
@@ -622,12 +790,19 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
         processing_time = (end_time - start_time).total_seconds()
 
         trading_decision = extract_decision_info(decision)
-        analysis_report = extract_analysis_report(state, processing_time)
+        analysis_report = extract_analysis_report(
+            state,
+            processing_time,
+            task_status=TaskStatus.COMPLETED.value,
+            execution_mode=request.execution_mode.value,
+        )
 
         task_state.update(
             {
                 "status": TaskStatus.COMPLETED.value,
+                "execution_mode": request.execution_mode.value,
                 "decision": model_dump_compat(trading_decision),
+                "stages": analysis_report.get("__stages", []),
                 "analysis_report": analysis_report,
                 "completed_at": end_time.isoformat(),
                 "processing_time_seconds": processing_time,
@@ -644,6 +819,7 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
             {
                 "status": TaskStatus.CANCELLED.value,
                 "cancel_requested": True,
+                "execution_mode": request.execution_mode.value,
                 "error": str(exc),
                 "completed_at": utcnow_iso(),
             }
@@ -654,6 +830,8 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
         task_state.update(
             {
                 "status": TaskStatus.FAILED.value,
+                "execution_mode": request.execution_mode.value,
+                "stages": task_state.get("stages", []),
                 "error": str(exc),
                 "completed_at": utcnow_iso(),
             }
@@ -708,11 +886,23 @@ def analysis_worker_loop() -> None:
                     task_id = maybe_payload.get("task_id")
                     ticker = maybe_payload.get("ticker", "")
                     date = maybe_payload.get("date", "")
+                    execution_mode_raw = maybe_payload.get("execution_mode", ExecutionMode.DEFAULT.value)
+                    execution_mode = (
+                        execution_mode_raw
+                        if execution_mode_raw in {mode.value for mode in ExecutionMode}
+                        else ExecutionMode.DEFAULT.value
+                    )
                     if task_id:
-                        task_state = load_task_state(task_id) or create_task_state(task_id, ticker, date)
+                        task_state = load_task_state(task_id) or create_task_state(
+                            task_id,
+                            ticker,
+                            date,
+                            ExecutionMode(execution_mode),
+                        )
                         task_state.update(
                             {
                                 "status": TaskStatus.FAILED.value,
+                                "execution_mode": execution_mode,
                                 "error": str(exc),
                                 "completed_at": utcnow_iso(),
                             }
@@ -780,12 +970,17 @@ async def health_check() -> HealthResponse:
     if restarted or not worker_alive:
         status_value = "degraded"
 
+    openclaw_gateway = fetch_openclaw_gateway_health()
+    if openclaw_gateway.get("status") not in {"healthy", "degraded"}:
+        status_value = "degraded"
+
     return HealthResponse(
         status=status_value,
         service="tradingagents-service",
         version="1.0.0",
         timestamp=utcnow_iso(),
         worker_alive=worker_alive,
+        openclaw_gateway=openclaw_gateway,
     )
 
 

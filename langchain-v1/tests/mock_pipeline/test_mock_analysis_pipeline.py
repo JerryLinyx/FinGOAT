@@ -202,8 +202,11 @@ class MockAnalysisPipelineTest(unittest.TestCase):
 
         body = final.json()
         self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["execution_mode"], "default")
         self.assertEqual(body["decision"]["action"], "BUY")
         self.assertEqual(body["decision"]["confidence"], 0.82)
+        self.assertTrue(body["stages"])
+        self.assertEqual(body["stages"][0]["stage_id"], "market")
         self.assertEqual(body["analysis_report"]["messages"][0]["type"], "human")
         self.assertEqual(body["analysis_report"]["raw_state"]["raw_trace"]["provider"], "aliyun")
         self.assertIsNone(body["error"])
@@ -231,11 +234,14 @@ class MockAnalysisPipelineTest(unittest.TestCase):
 
         self.assertIn("__stage_times", report)
         self.assertIn("__key_outputs", report)
+        self.assertIn("__stages", report)
         self.assertAlmostEqual(report["__stage_times"]["market_report"], 2.5)
         self.assertAlmostEqual(report["__stage_times"]["investment_plan"], 3.0)
         self.assertAlmostEqual(report["__stage_times"]["final_trade_decision"], 1.2)
         self.assertEqual(report["__key_outputs"]["market_report"]["label"], "Technical")
         self.assertIn("Momentum is improving", report["__key_outputs"]["market_report"]["summary"])
+        self.assertEqual(report["__stages"][0]["stage_id"], "market")
+        self.assertEqual(report["__stages"][0]["backend"], "default")
 
     def test_processing_checkpoint_is_persisted_before_completion(self):
         snapshots = []

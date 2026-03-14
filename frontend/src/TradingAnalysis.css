@@ -37,9 +37,9 @@
 
 .form-group input {
   padding: 0.75rem;
-  border-radius: 10px;
+  border-radius: 6px;
   border: 1px solid var(--panel-border);
-  background: var(--panel-bg);
+  background: var(--surface-soft);
   color: var(--text-primary);
   font-size: 0.95rem;
   transition: all 0.2s ease;

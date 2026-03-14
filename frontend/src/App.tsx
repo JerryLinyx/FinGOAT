@@ -11,25 +11,15 @@ import type { ChangeEvent, FormEvent } from 'react'
 import './App.css'
 import { TradingAnalysis } from './components/TradingAnalysis'
 import { ChartPage } from './components/ChartPage'
+import { OpenClawPage } from './components/OpenClawPage'
+import { FeedPage } from './components/FeedPage'
 
 type AuthMode = 'login' | 'register'
 type View = 'auth' | 'home'
 type Theme = 'light' | 'dark'
-type CollapsiblePanel = 'config' | 'news'
-type DragPanel = 'config' | 'news' | null
-type ActiveTab = 'dashboard' | 'chart'
-
-type Article = {
-  id: number
-  title: string
-  content: string
-  preview: string
-  createdAt?: string
-  publishedAt?: string
-  source?: string
-  sourceURL?: string
-  link?: string
-}
+type CollapsiblePanel = 'config'
+type DragPanel = 'config' | null
+type ActiveTab = 'dashboard' | 'feed' | 'chart' | 'openclaw'
 
 
 
@@ -117,13 +107,6 @@ const TOKEN_STORAGE_KEY = 'fingoat_token'
 const rawApiUrl = import.meta.env.VITE_API_URL
 const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/$/, '') : ''
 
-const getAuthorizationHeader = (): string => {
-  const token = localStorage.getItem(TOKEN_STORAGE_KEY)
-  if (!token) {
-    return ''
-  }
-  return token.startsWith('Bearer ') ? token : `Bearer ${token}`
-}
 
 const initialForm = {
   username: '',
@@ -131,17 +114,7 @@ const initialForm = {
   confirmPassword: '',
 }
 
-const DATA_SOURCES = [
-  { label: 'Bloomberg Terminal', enabled: true },
-  { label: 'Reuters Eikon', enabled: true },
-  { label: 'SEC EDGAR Filings', enabled: true },
-  { label: 'Social Media Sentiment', enabled: false },
-] as const
 
-const NOTIFICATION_CHANNELS = [
-  { label: 'Trade Executions', enabled: true },
-  { label: 'Major Market Alerts', enabled: true },
-] as const
 
 const RISK_LABELS = ['Conservative', 'Moderate', 'Aggressive'] as const
 const SIDE_PANEL_MIN_WIDTH = 240
@@ -168,41 +141,17 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [articles, setArticles] = useState<Article[]>([])
-  const [articlesLoading, setArticlesLoading] = useState(false)
-  const [articlesError, setArticlesError] = useState('')
-  const [riskTolerance, setRiskTolerance] = useState(1)
-  const [dataSources, setDataSources] = useState<Record<string, boolean>>(() =>
-    DATA_SOURCES.reduce(
-      (acc, source) => ({
-        ...acc,
-        [source.label]: source.enabled,
-      }),
-      {} as Record<string, boolean>,
-    ),
-  )
-  const [notificationsState, setNotificationsState] = useState<Record<string, boolean>>(() =>
-    NOTIFICATION_CHANNELS.reduce(
-      (acc, channel) => ({
-        ...acc,
-        [channel.label]: channel.enabled,
-      }),
-      {} as Record<string, boolean>,
-    ),
-  )
-  const [expandedArticles, setExpandedArticles] = useState<Record<number, boolean>>({})
-  const [articleLikes, setArticleLikes] = useState<Record<number, number>>({})
-  const [likingArticle, setLikingArticle] = useState<Record<number, boolean>>({})
+
   const [llmProvider, setLlmProvider] = useState('ollama')
   const [llmModel, setLlmModel] = useState('gemma3:1b')
   const [llmBaseUrl, setLlmBaseUrl] = useState('http://localhost:11434')
+  const [executionMode, setExecutionMode] = useState<'default' | 'openclaw'>('default')
+  const [riskTolerance, setRiskTolerance] = useState(1)
   const [collapsedPanels, setCollapsedPanels] = useState<Record<CollapsiblePanel, boolean>>({
     config: false,
-    news: false,
   })
   const [panelWidths, setPanelWidths] = useState<Record<CollapsiblePanel, number>>({
     config: 320,
-    news: 320,
   })
   const [draggingPanel, setDraggingPanel] = useState<DragPanel>(null)
   const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
@@ -244,19 +193,7 @@ function App() {
     return 'Create an account to start orchestrating trades.'
   }, [mode])
 
-  const toggleDataSource = (label: string) => {
-    setDataSources((prev) => ({
-      ...prev,
-      [label]: !prev[label],
-    }))
-  }
 
-  const toggleNotification = (label: string) => {
-    setNotificationsState((prev) => ({
-      ...prev,
-      [label]: !prev[label],
-    }))
-  }
 
   const handleRiskChange = (event: ChangeEvent<HTMLInputElement>) => {
     setRiskTolerance(Number(event.target.value))
@@ -266,12 +203,7 @@ function App() {
     // Placeholder - handled by TradingAnalysis component
   }
 
-  const toggleArticleBody = (articleId: number) => {
-    setExpandedArticles((prev) => ({
-      ...prev,
-      [articleId]: !prev[articleId],
-    }))
-  }
+
 
   const resetSession = useCallback((message?: string) => {
     localStorage.removeItem(TOKEN_STORAGE_KEY)
@@ -281,190 +213,10 @@ function App() {
     setShowPassword(false)
     setSuccess('')
     setError(message ?? '')
-    setArticles([])
-    setArticlesError('')
-    setArticlesLoading(false)
+
   }, [])
 
-  const fetchArticleLikes = useCallback(
-    async (ids: number[]) => {
-      const token = getAuthorizationHeader()
-      if (!token || ids.length === 0) {
-        return
-      }
-      try {
-        const results = await Promise.all(
-          ids.map(async (articleId) => {
-            const response = await fetch(`${API_BASE_URL}/api/articles/${articleId}/like`, {
-              method: 'GET',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: token,
-              },
-            })
 
-            if (response.status === 401) {
-              resetSession('Session expired. Please log in again.')
-              return [articleId, 0] as const
-            }
-
-            if (!response.ok) {
-              return [articleId, 0] as const
-            }
-
-            const data = await response.json().catch(() => ({}))
-            return [articleId, Number(data.likes ?? 0)] as const
-          }),
-        )
-
-        setArticleLikes((prev) => {
-          const next = { ...prev }
-          results.forEach(([articleId, value]) => {
-            if (!Number.isNaN(value)) {
-              next[articleId] = value
-            }
-          })
-          return next
-        })
-      } catch {
-        // ignore network hiccups for like counts
-      }
-    },
-    [resetSession],
-  )
-
-  const fetchArticles = useCallback(
-    async (options?: { signal?: AbortSignal; refresh?: boolean }) => {
-      const signal = options?.signal
-      const shouldRefresh = options?.refresh
-      const token = getAuthorizationHeader()
-      if (!token) {
-        resetSession()
-        return
-      }
-
-      setArticlesLoading(true)
-      setArticlesError('')
-      try {
-        if (shouldRefresh) {
-          await fetch(`${API_BASE_URL}/api/articles/refresh`, {
-            method: 'GET',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: token,
-            },
-            signal,
-          }).catch((err) => {
-            console.warn('RSS refresh failed', err)
-          })
-        }
-
-        const response = await fetch(`${API_BASE_URL}/api/articles`, {
-          method: 'GET',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: token,
-          },
-          signal,
-        })
-
-        if (signal?.aborted) return
-
-        if (response.status === 401) {
-          resetSession('Session expired. Please log in again.')
-          return
-        }
-
-        const payload = await response.json().catch(() => null)
-
-        if (!response.ok) {
-          const message =
-            payload && typeof payload.error === 'string'
-              ? payload.error
-              : 'Unable to fetch articles right now.'
-          setArticlesError(message)
-          return
-        }
-
-        const normalizeArticle = (item: Record<string, unknown>): Article => ({
-          id: Number(item.id ?? item.ID ?? 0),
-          title: String(item.title ?? item.Title ?? 'Untitled article'),
-          content: String(item.content ?? item.Content ?? ''),
-          preview: String(item.preview ?? item.Preview ?? ''),
-          createdAt: String(item.createdAt ?? item.CreatedAt ?? ''),
-          publishedAt: String(item.publishedAt ?? item.PublishedAt ?? ''),
-          source: String(item.source ?? item.Source ?? ''),
-          sourceURL: String(item.sourceURL ?? item.SourceURL ?? ''),
-          link: String(item.link ?? item.Link ?? ''),
-        })
-
-        const rawItems = Array.isArray(payload)
-          ? (payload as Record<string, unknown>[])
-          : payload
-            ? [payload as Record<string, unknown>]
-            : []
-        const normalized = rawItems.map((item) => normalizeArticle(item))
-        setArticles(normalized)
-        setExpandedArticles({})
-        fetchArticleLikes(normalized.map((article) => article.id))
-      } catch (err) {
-        if (signal?.aborted) return
-        setArticlesError(
-          err instanceof Error
-            ? err.message
-            : 'Unexpected error while loading news.',
-        )
-      } finally {
-        if (!signal?.aborted) {
-          setArticlesLoading(false)
-        }
-      }
-    },
-    [resetSession, fetchArticleLikes],
-  )
-
-  useEffect(() => {
-    if (view !== 'home') return
-    const controller = new AbortController()
-    fetchArticles({ signal: controller.signal })
-    return () => controller.abort()
-  }, [view, fetchArticles])
-
-  const handleLikeArticle = async (articleId: number) => {
-    const token = getAuthorizationHeader()
-    if (!token) {
-      resetSession()
-      return
-    }
-    setLikingArticle((prev) => ({ ...prev, [articleId]: true }))
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/articles/${articleId}/like`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: token,
-        },
-      })
-
-      if (response.status === 401) {
-        resetSession('Session expired. Please log in again.')
-        return
-      }
-
-      if (response.ok) {
-        setArticleLikes((prev) => ({
-          ...prev,
-          [articleId]: (prev[articleId] ?? 0) + 1,
-        }))
-      }
-    } catch {
-      setArticlesError((prev) =>
-        prev || 'Unable to register your like right now. Please try again later.',
-      )
-    } finally {
-      setLikingArticle((prev) => ({ ...prev, [articleId]: false }))
-    }
-  }
 
   const handleInputChange = (event: ChangeEvent<HTMLInputElement>): void => {
     const { name, value } = event.target
@@ -668,18 +420,6 @@ function App() {
           )
           setPanelWidths((prev) => ({ ...prev, config: nextWidth }))
         }
-      } else if (draggingPanel === 'news') {
-        const measuredWidth = bounds.right - event.clientX
-        if (measuredWidth < 180) {
-          setCollapsedPanels((prev) => ({ ...prev, news: true }))
-        } else {
-          setCollapsedPanels((prev) => ({ ...prev, news: false }))
-          const nextWidth = Math.min(
-            SIDE_PANEL_MAX_WIDTH,
-            Math.max(SIDE_PANEL_MIN_WIDTH, measuredWidth),
-          )
-          setPanelWidths((prev) => ({ ...prev, news: nextWidth }))
-        }
       }
     }
 
@@ -700,20 +440,9 @@ function App() {
     }
   }, [draggingPanel, isDesktopLayout])
 
-  const formatTimestamp = (value?: string) => {
-    if (!value) return 'Moments ago'
-    const date = new Date(value)
-    if (Number.isNaN(date.getTime())) return 'Moments ago'
-    return date.toLocaleString('en-US', {
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
+
 
   const isConfigCollapsed = isDesktopLayout && collapsedPanels.config
-  const isNewsCollapsed = isDesktopLayout && collapsedPanels.news
 
   const dashboardView = (
     <div className="dashboard">
@@ -735,10 +464,24 @@ function App() {
           </button>
           <button
             type="button"
+            className={`nav-tab ${activeTab === 'feed' ? 'nav-tab--active' : ''}`}
+            onClick={() => setActiveTab('feed')}
+          >
+            Feed
+          </button>
+          <button
+            type="button"
             className={`nav-tab ${activeTab === 'chart' ? 'nav-tab--active' : ''}`}
             onClick={() => setActiveTab('chart')}
           >
             Chart
+          </button>
+          <button
+            type="button"
+            className={`nav-tab ${activeTab === 'openclaw' ? 'nav-tab--active' : ''}`}
+            onClick={() => setActiveTab('openclaw')}
+          >
+            OpenClaw
           </button>
         </nav>
         <div className="nav-actions">
@@ -761,8 +504,12 @@ function App() {
         </div>
       </header>
 
-      {activeTab === 'chart' ? (
+      {activeTab === 'feed' ? (
+        <FeedPage onSessionExpired={resetSession} />
+      ) : activeTab === 'chart' ? (
         <ChartPage onSessionExpired={resetSession} />
+      ) : activeTab === 'openclaw' ? (
+        <OpenClawPage />
       ) : (
       <main
         ref={dashboardGridRef}
@@ -770,7 +517,7 @@ function App() {
         style={
           isDesktopLayout
             ? {
-              gridTemplateColumns: `${isConfigCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.config}px 14px minmax(0, 1fr) 14px ${isNewsCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.news}px`,
+              gridTemplateColumns: `${isConfigCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.config}px 14px minmax(0, 1fr)`,
             }
             : undefined
         }
@@ -853,6 +600,20 @@ function App() {
               )}
 
             <div className="config-group">
+              <label className="config-label" htmlFor="execution-mode">
+                Execution Mode
+              </label>
+              <select
+                id="execution-mode"
+                value={executionMode}
+                onChange={(e) => setExecutionMode(e.target.value as 'default' | 'openclaw')}
+              >
+                <option value="default">Default</option>
+                <option value="openclaw">OpenClaw</option>
+              </select>
+            </div>
+
+            <div className="config-group">
               <div className="config-label-row">
                 <span>Risk Tolerance</span>
                 <span className="config-value">{riskTone}</span>
@@ -872,54 +633,10 @@ function App() {
               </div>
             </div>
 
-            <div className="config-group">
-              <p className="config-label">Data Sources</p>
-              <ul className="config-list">
-                {DATA_SOURCES.map((source) => (
-                  <li key={source.label} className="config-check">
-                    <button
-                      type="button"
-                      className={`config-row ${dataSources[source.label] ? 'active' : ''}`}
-                      onClick={() => toggleDataSource(source.label)}
-                      aria-pressed={dataSources[source.label]}
-                    >
-                      <span>{source.label}</span>
-                      <span
-                        className={`check-pill ${dataSources[source.label] ? 'active' : ''}`}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
 
-            <div className="config-group">
-              <p className="config-label">Notifications</p>
-              <ul className="config-list">
-                {NOTIFICATION_CHANNELS.map((channel) => (
-                  <li key={channel.label} className="config-check">
-                    <button
-                      type="button"
-                      className={`config-row ${notificationsState[channel.label] ? 'active' : ''
-                        }`}
-                      onClick={() => toggleNotification(channel.label)}
-                      aria-pressed={notificationsState[channel.label]}
-                    >
-                      <span>{channel.label}</span>
-                      <span
-                        className={`check-pill ${notificationsState[channel.label] ? 'active' : ''
-                          }`}
-                        aria-hidden="true"
-                      />
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
 
             <div className="config-note">
-              Operating in <strong>{riskTone}</strong> mode using <strong>{llmProvider}</strong> / <strong>{llmModel}</strong>.
+              Executing in <strong>{executionMode}</strong> mode with <strong>{riskTone}</strong> risk, using <strong>{llmProvider}</strong> / <strong>{llmModel}</strong>.
             </div>
 
             <div className="config-actions">
@@ -977,117 +694,12 @@ function App() {
               llmProvider={llmProvider}
               llmModel={llmModel}
               llmBaseUrl={llmBaseUrl}
+              executionMode={executionMode}
             />
           </div>
         </section>
 
-        <div className={`panel-splitter panel-splitter--right ${draggingPanel === 'news' ? 'panel-splitter--active' : ''}`}>
-          <button
-            type="button"
-            className="panel-splitter__toggle"
-            onClick={(e) => {
-              if (isDraggingRef.current) {
-                e.preventDefault()
-                return
-              }
-              togglePanelCollapse('news')
-            }}
-            onMouseDown={(e) => handleSplitterMouseDown(e, 'news')}
-            aria-label={isNewsCollapsed ? 'Expand market news sidebar' : 'Collapse market news sidebar'}
-            title={isNewsCollapsed ? 'Expand market news sidebar' : 'Collapse market news sidebar'}
-          >
-            {isNewsCollapsed ? '◂' : '▸'}
-          </button>
-        </div>
 
-        <section className={`panel news-panel panel--side ${isNewsCollapsed ? 'panel--side-collapsed' : ''}`}>
-          <div className="panel-heading">
-            <PanelIcon type="news" />
-            <div className={`panel-heading-copy ${isNewsCollapsed ? 'panel-heading-copy--hidden' : ''}`}>
-              <p className="panel-label">Market News</p>
-              <h2>Live Articles</h2>
-            </div>
-            <div className="panel-heading-actions">
-              <button
-                type="button"
-                className="panel-action panel-action--icon"
-                onClick={() => fetchArticles({ refresh: true })}
-                disabled={articlesLoading}
-                aria-label={articlesLoading ? 'Refreshing articles' : 'Refresh articles'}
-                title={articlesLoading ? 'Refreshing articles' : 'Refresh articles'}
-              >
-                ↺
-              </button>
-            </div>
-          </div>
-
-          {!isNewsCollapsed && (
-          <div className="panel-body">
-            <div className="news-list">
-              {articlesLoading && <p className="news-placeholder">Loading articles…</p>}
-              {!articlesLoading && articlesError && (
-                <p className="news-error">{articlesError}</p>
-              )}
-              {!articlesLoading && !articlesError && articles.length === 0 && (
-                <p className="news-placeholder">
-                  No articles yet. Use the backend endpoints to seed insights.
-                </p>
-              )}
-              {!articlesLoading &&
-                !articlesError &&
-                articles.map((article) => {
-                  const expanded = !!expandedArticles[article.id]
-                  const likes = articleLikes[article.id] ?? 0
-                  const isLiking = !!likingArticle[article.id]
-                  return (
-                    <article key={article.id} className="news-card">
-                      <div className="news-head">
-                      <div>
-                          <p className="news-meta">
-                            {article.source ? `${article.source} • ` : ''}
-                            {formatTimestamp(article.publishedAt || article.createdAt)}
-                          </p>
-                          <h3>{article.title}</h3>
-                        </div>
-                        <button
-                          type="button"
-                          className="news-toggle"
-                          onClick={() => toggleArticleBody(article.id)}
-                        >
-                          {expanded ? 'Hide' : 'Read more'}
-                        </button>
-                      </div>
-                      <p className="news-preview">{article.preview}</p>
-                      {expanded && <p className="news-content">{article.content}</p>}
-                      <div className="news-actions">
-                        {article.link && (
-                          <a
-                            className="news-link"
-                            href={article.link}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            Open source →
-                          </a>
-                        )}
-                        <button
-                          type="button"
-                          className="like-btn"
-                          onClick={() => handleLikeArticle(article.id)}
-                          disabled={isLiking}
-                        >
-                          <span aria-hidden="true">♥</span>
-                          <span>{isLiking ? 'Sending…' : `${likes} Likes`}</span>
-                        </button>
-                        <span className="news-id">#{article.id}</span>
-                      </div>
-                    </article>
-                  )
-                })}
-            </div>
-          </div>
-          )}
-        </section>
       </main>
       )}
     </div>

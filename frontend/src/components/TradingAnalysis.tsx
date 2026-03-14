@@ -9,9 +9,10 @@ interface TradingAnalysisProps {
     llmProvider: string
     llmModel: string
     llmBaseUrl?: string
+    executionMode: 'default' | 'openclaw'
 }
 
-export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl }: TradingAnalysisProps) {
+export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl, executionMode }: TradingAnalysisProps) {
     const ACTIVE_TASK_STORAGE_KEY = 'fingoat_active_analysis_task_id'
     const [ticker, setTicker] = useState('')
     const [date, setDate] = useState(() => {
@@ -40,12 +41,13 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 task &&
                 previousTask &&
                 task.task_id === previousTask.task_id &&
-                !task.analysis_report &&
-                previousTask.analysis_report
+                ((!task.analysis_report && previousTask.analysis_report) ||
+                    ((!task.stages || task.stages.length === 0) && previousTask.stages && previousTask.stages.length > 0))
             ) {
                 return {
                     ...task,
-                    analysis_report: previousTask.analysis_report,
+                    analysis_report: task.analysis_report ?? previousTask.analysis_report,
+                    stages: task.stages && task.stages.length > 0 ? task.stages : previousTask.stages,
                 }
             }
             return task
@@ -157,7 +159,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 quick_think_llm: llmModel,
                 deep_think_llm: llmModel,
             }
-            const task = await tradingService.requestAnalysis(ticker.trim(), date, llmConfig)
+            const task = await tradingService.requestAnalysis(ticker.trim(), date, llmConfig, executionMode)
             applyTaskState(task)
             await pollTask(task.task_id)
         } catch (err) {
@@ -261,6 +263,9 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 <div className="result-header">
                     <h3>{currentTask.ticker}</h3>
                     <div className="result-header-actions">
+                        <span className="status-badge" style={{ backgroundColor: '#1f2937' }}>
+                            {currentTask.execution_mode === 'openclaw' ? 'OPENCLAW' : 'DEFAULT'}
+                        </span>
                         <span
                             className="status-badge"
                             style={{ backgroundColor: getStatusColor(currentTask.status) }}

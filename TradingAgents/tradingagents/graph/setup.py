@@ -27,6 +27,8 @@ class GraphSetup:
         invest_judge_memory,
         risk_manager_memory,
         conditional_logic: ConditionalLogic,
+        config: Dict[str, Any],
+        openclaw_adapter,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
@@ -38,6 +40,8 @@ class GraphSetup:
         self.invest_judge_memory = invest_judge_memory
         self.risk_manager_memory = risk_manager_memory
         self.conditional_logic = conditional_logic
+        self.config = config
+        self.openclaw_adapter = openclaw_adapter
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -58,29 +62,58 @@ class GraphSetup:
         analyst_nodes = {}
         tool_nodes = {}
 
+        agent_backend_overrides = dict(self.config.get("agent_backend_overrides") or {})
+        execution_mode = str(self.config.get("execution_mode") or "default")
+
+        def analyst_backend(analyst_type: str) -> str:
+            override = agent_backend_overrides.get(analyst_type)
+            if isinstance(override, str) and override.strip():
+                return override.strip().lower()
+            if execution_mode == "openclaw":
+                return "openclaw"
+            return "default"
+
+        def build_openclaw_node(analyst_type: str):
+            def node(state):
+                return self.openclaw_adapter.run_stage(analyst_type, state)
+
+            return node
+
         if "market" in selected_analysts:
             analyst_nodes["market"] = create_market_analyst(
                 self.quick_thinking_llm
             )
-            tool_nodes["market"] = self.tool_nodes["market"]
+            if analyst_backend("market") == "openclaw":
+                analyst_nodes["market"] = build_openclaw_node("market")
+            else:
+                tool_nodes["market"] = self.tool_nodes["market"]
 
         if "social" in selected_analysts:
             analyst_nodes["social"] = create_social_media_analyst(
                 self.quick_thinking_llm
             )
-            tool_nodes["social"] = self.tool_nodes["social"]
+            if analyst_backend("social") == "openclaw":
+                analyst_nodes["social"] = build_openclaw_node("social")
+            else:
+                tool_nodes["social"] = self.tool_nodes["social"]
 
         if "news" in selected_analysts:
             analyst_nodes["news"] = create_news_analyst(
                 self.quick_thinking_llm
             )
-            tool_nodes["news"] = self.tool_nodes["news"]
+            if analyst_backend("news") == "openclaw":
+                analyst_nodes["news"] = build_openclaw_node("news")
+            else:
+                tool_nodes["news"] = self.tool_nodes["news"]
 
         if "fundamentals" in selected_analysts:
             analyst_nodes["fundamentals"] = create_fundamentals_analyst(
                 self.quick_thinking_llm
             )
-            tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
+            if analyst_backend("fundamentals") == "openclaw":
+                analyst_nodes["fundamentals"] = build_openclaw_node("fundamentals")
+            else:
+                tool_nodes["fundamentals"] = self.tool_nodes["fundamentals"]
 
         # Create researcher and manager nodes
         bull_researcher_node = create_bull_researcher(
@@ -129,7 +162,8 @@ class GraphSetup:
                 f"{analyst_type.capitalize()} Analyst",
                 timed_node(f"{analyst_type.capitalize()} Analyst", node),
             )
-            workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
+            if analyst_type in tool_nodes:
+                workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
 
         workflow.add_node("Analyst Join", lambda state: state)
         workflow.add_node("Analyst Wait", lambda state: state)
@@ -167,15 +201,17 @@ class GraphSetup:
 
         for analyst_type in selected_analysts:
             current_analyst = f"{analyst_type.capitalize()} Analyst"
-            current_tools = f"tools_{analyst_type}"
+            if analyst_type in tool_nodes:
+                current_tools = f"tools_{analyst_type}"
 
-            # Add conditional edges for current analyst
-            workflow.add_conditional_edges(
-                current_analyst,
-                getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                [current_tools, "Analyst Join"],
-            )
-            workflow.add_edge(current_tools, current_analyst)
+                workflow.add_conditional_edges(
+                    current_analyst,
+                    getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
+                    [current_tools, "Analyst Join"],
+                )
+                workflow.add_edge(current_tools, current_analyst)
+            else:
+                workflow.add_edge(current_analyst, "Analyst Join")
 
         workflow.add_conditional_edges(
             "Analyst Join",

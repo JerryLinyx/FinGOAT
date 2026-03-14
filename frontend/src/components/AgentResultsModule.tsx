@@ -43,6 +43,9 @@ export function AgentResultsModule({ task }: AgentResultsModuleProps) {
 
   const activeStage = stages.find((stage) => stage.key === selectedStage) ?? stages[0]
   if (!task || !activeStage) return null
+  const detailMeta = [activeStage.backend, activeStage.durationSeconds !== undefined ? formatDuration(activeStage.durationSeconds) : null]
+    .filter(Boolean)
+    .join(' · ')
 
   return (
     <div className="agent-results-module">
@@ -60,6 +63,9 @@ export function AgentResultsModule({ task }: AgentResultsModuleProps) {
                 {stage.status.toUpperCase()}
               </span>
             </div>
+            {stage.backend && (
+              <div className="agent-stage-card__duration">{stage.backend === 'openclaw' ? 'OpenClaw' : 'Default'}</div>
+            )}
             {stage.durationSeconds !== undefined && (
               <div className="agent-stage-card__duration">{formatDuration(stage.durationSeconds)}</div>
             )}
@@ -73,9 +79,7 @@ export function AgentResultsModule({ task }: AgentResultsModuleProps) {
       <div className="agent-stage-detail">
         <div className="agent-stage-detail__header">
           <h4>{activeStage.label}</h4>
-          {activeStage.durationSeconds !== undefined && (
-            <span className="agent-stage-detail__duration">{formatDuration(activeStage.durationSeconds)}</span>
-          )}
+          {detailMeta && <span className="agent-stage-detail__duration">{detailMeta}</span>}
         </div>
         <pre className="agent-stage-detail__content">{formatContent(activeStage.content)}</pre>
       </div>

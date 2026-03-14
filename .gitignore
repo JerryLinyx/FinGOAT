@@ -72,3 +72,4 @@ logs/
 *.sqlite3
 db.sqlite3
 .gocache/
+openclaw-gateway/state/
