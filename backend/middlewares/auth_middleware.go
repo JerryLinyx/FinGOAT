@@ -12,6 +12,12 @@ import (
 func AuthMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		token := c.GetHeader("Authorization")
+		// Fallback: browser EventSource cannot set custom headers — accept ?token= query param
+		if token == "" {
+			if qt := c.Query("token"); qt != "" {
+				token = "Bearer " + qt
+			}
+		}
 		if token == "" {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			c.Abort()

@@ -111,6 +111,81 @@
   cursor: not-allowed;
 }
 
+/* Query history row */
+.chart-history {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  flex-wrap: wrap;
+  padding: 0 0.25rem;
+}
+
+.chart-history-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.chart-history-chips {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.chart-history-chip {
+  padding: 0.3rem 0.75rem;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel-bg);
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: all 0.18s ease;
+}
+
+.chart-history-chip:hover:not(:disabled) {
+  background: var(--surface-soft);
+  border-color: var(--text-secondary);
+  transform: translateY(-1px);
+}
+
+.chart-history-chip--active {
+  background: var(--ink-black);
+  color: #fff;
+  border-color: var(--ink-black);
+}
+
+.chart-history-chip--active:hover:not(:disabled) {
+  background: #33332d;
+}
+
+.chart-history-chip:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chart-history-clear {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  cursor: pointer;
+  padding: 0.25rem 0.35rem;
+  border-radius: 4px;
+  transition: color 0.15s ease;
+  line-height: 1;
+}
+
+.chart-history-clear:hover {
+  color: var(--text-primary);
+}
+
 .chart-error {
   padding: 0.75rem 1rem;
   background: rgba(239, 68, 68, 0.08);

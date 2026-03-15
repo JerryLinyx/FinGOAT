@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/JerryLinyx/FinGOAT/global"
@@ -112,6 +113,17 @@ type AnalysisTaskResponse struct {
 	LLMBaseURL            string                  `json:"llm_base_url,omitempty"`
 	CreatedAt             string                  `json:"created_at"`
 	UpdatedAt             string                  `json:"updated_at"`
+}
+
+func normalizeLLMProviderName(provider string) string {
+	normalized := strings.ToLower(strings.TrimSpace(provider))
+	if normalized == "" {
+		return ""
+	}
+	if normalized == "aliyun" {
+		return "dashscope"
+	}
+	return normalized
 }
 
 func generateTaskID() (string, error) {
@@ -391,7 +403,7 @@ func buildAnalysisTaskResponse(task *models.TradingAnalysisTask, runtime *Runtim
 		ExecutionMode:         normalizeExecutionMode(task.ExecutionMode),
 		Error:                 task.Error,
 		ProcessingTimeSeconds: task.ProcessingTimeSeconds,
-		LLMProvider:           task.LLMProvider,
+		LLMProvider:           normalizeLLMProviderName(task.LLMProvider),
 		LLMModel:              task.LLMModel,
 		LLMBaseURL:            task.LLMBaseURL,
 		CreatedAt:             task.CreatedAt.UTC().Format(time.RFC3339),

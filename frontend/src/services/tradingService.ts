@@ -91,6 +91,29 @@ export interface OHLCVPoint {
     volume: number
 }
 
+export interface OllamaModel {
+    name: string
+    modified_at?: string
+    size?: number
+}
+
+/** Events emitted by the SSE stream endpoint */
+export interface StreamEvent {
+    type: 'token' | 'stage_end' | 'task_complete' | 'task_error' | 'error'
+    /** Stage identifier (market, social, news, etc.) */
+    stage_id?: string
+    /** LangGraph node name */
+    node?: string
+    /** Token text (for type=token) */
+    t?: string
+    /** JSON-serialised StageResult for type=stage_end */
+    data?: string
+    /** Task status for type=task_complete */
+    status?: string
+    /** Error message */
+    error?: string
+}
+
 class TradingService {
     private getAuthHeaders(): HeadersInit {
         const token = localStorage.getItem(TOKEN_STORAGE_KEY)
@@ -235,6 +258,60 @@ class TradingService {
         }
 
         return response.json()
+    }
+
+    async getOllamaModels(baseUrl: string): Promise<{ base_url: string; models: OllamaModel[] }> {
+        const url = new URL(`${API_BASE_URL}/api/trading/ollama/models`)
+        if (baseUrl.trim()) {
+            url.searchParams.set('base_url', baseUrl.trim())
+        }
+
+        const response = await fetch(url.toString(), {
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to detect Ollama models' }))
+            throw new Error(error.error || 'Failed to detect Ollama models')
+        }
+
+        return response.json()
+    }
+
+    /** Return the raw JWT token string (without Bearer prefix) for use in EventSource URLs */
+    getAuthToken(): string | null {
+        return localStorage.getItem(TOKEN_STORAGE_KEY)
+    }
+
+    /**
+     * Open an SSE stream for a task. Returns a cleanup function.
+     *
+     * NOTE: Browser's native EventSource cannot set custom headers,
+     * so we pass the JWT via ?token= query param. The Go AuthMiddleware
+     * accepts this fallback.
+     */
+    streamAnalysis(
+        taskId: string,
+        onEvent: (event: StreamEvent) => void,
+        token: string,
+    ): () => void {
+        const url = `${API_BASE_URL}/api/trading/analysis/${taskId}/stream?token=${encodeURIComponent(token)}`
+        const es = new EventSource(url)
+
+        es.onmessage = (msg) => {
+            try {
+                const parsed = JSON.parse(msg.data) as StreamEvent
+                onEvent(parsed)
+            } catch {
+                // ignore malformed frames
+            }
+        }
+
+        es.onerror = () => {
+            es.close()
+        }
+
+        return () => es.close()
     }
 }
 

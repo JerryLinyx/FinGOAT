@@ -93,6 +93,7 @@ func RequestAnalysis(c *gin.Context) {
 
 	var llmProvider, llmModel, llmBaseURL string
 	if req.LLMConfig != nil {
+		req.LLMConfig.Provider = normalizeLLMProviderName(req.LLMConfig.Provider)
 		llmProvider = req.LLMConfig.Provider
 		llmModel = req.LLMConfig.QuickThinkLLM
 		if llmModel == "" {
@@ -187,6 +188,69 @@ func GetAnalysisResult(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, buildAnalysisTaskResponse(&task, runtime))
+}
+
+// StreamAnalysisResult proxies the SSE stream from the Python trading service.
+// Auth is already handled by the AuthMiddleware (supports ?token= fallback for EventSource).
+func StreamAnalysisResult(c *gin.Context) {
+	taskID := c.Param("task_id")
+
+	_, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "user not authenticated"})
+		return
+	}
+
+	// Build upstream SSE URL (no-timeout client — streams indefinitely)
+	upstreamURL := fmt.Sprintf("%s/api/v1/analysis/%s/stream", tradingServiceURL, taskID)
+	req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, upstreamURL, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to build upstream request"})
+		return
+	}
+
+	// Use a client with no timeout for streaming
+	streamClient := &http.Client{}
+	resp, err := streamClient.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"error": "upstream stream unavailable: " + err.Error()})
+		return
+	}
+	defer resp.Body.Close()
+
+	// Set SSE response headers
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("X-Accel-Buffering", "no") // disable nginx buffering
+
+	flusher, ok := c.Writer.(http.Flusher)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "streaming not supported"})
+		return
+	}
+
+	buf := make([]byte, 4096)
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			return
+		default:
+			n, readErr := resp.Body.Read(buf)
+			if n > 0 {
+				if _, writeErr := c.Writer.Write(buf[:n]); writeErr != nil {
+					return
+				}
+				flusher.Flush()
+			}
+			if readErr != nil {
+				if readErr != io.EOF {
+					_ = readErr // stream closed normally
+				}
+				return
+			}
+		}
+	}
 }
 
 // ListUserAnalyses lists all analysis tasks for the current user

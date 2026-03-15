@@ -101,9 +101,15 @@
   transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
 }
 
-.analyze-button:not(:disabled):active .rocket-icon {
-  transform: translate(25px, -25px) scale(0);
-  transition: transform 0.3s ease-in;
+.rocket-icon.launching {
+  animation: rocket-launch 0.6s ease-in-out forwards;
+}
+
+@keyframes rocket-launch {
+  0% { transform: translate(0, 0) scale(1); }
+  20% { transform: translate(-2px, 2px); }
+  40% { transform: translate(2px, -2px); }
+  100% { transform: translate(40px, -40px) scale(0); opacity: 0; }
 }
 
 .button-spinner {
@@ -155,6 +161,71 @@
   font-weight: 700;
   letter-spacing: 0.05em;
   color: #fff;
+}
+
+.analysis-live-meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+.analysis-live-meta__card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.9rem 1rem;
+  border-radius: 12px;
+  border: 1px solid var(--panel-border);
+  background: var(--surface-soft);
+}
+
+.analysis-live-meta__label {
+  font-size: 0.74rem;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.analysis-live-meta__card strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.analysis-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  padding: 0.85rem 1rem;
+  border-radius: 12px;
+  background: var(--surface-soft);
+  border: 1px solid var(--panel-border);
+}
+
+.analysis-progress__track {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(148, 163, 184, 0.18);
+  overflow: hidden;
+}
+
+.analysis-progress__fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--accent), #22c55e);
+  transition: width 0.3s ease;
+}
+
+.analysis-progress__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+  color: var(--muted);
 }
 
 .secondary-button {
@@ -443,6 +514,10 @@
   .decision-card {
     grid-template-columns: 1fr;
   }
+
+  .analysis-live-meta {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .error-result p {
@@ -531,4 +606,469 @@
 .item-provider {
   font-size: 0.75rem;
   color: var(--muted);
+}
+
+/* ── Stage pulse animation (processing state) ─────────────────────────────── */
+.agent-stage-card--processing {
+  animation: stage-pulse 2s ease-in-out infinite;
+}
+
+@keyframes stage-pulse {
+  0%, 100% { border-color: var(--panel-border); }
+  50%       { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(76, 110, 245, 0.12); }
+}
+
+/* ── Agent overall progress bar ───────────────────────────────────────────── */
+.agent-progress-bar-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.agent-progress-bar-track {
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--panel-border);
+  overflow: hidden;
+}
+
+.agent-progress-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  transition: width 0.4s ease;
+}
+
+.agent-progress-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ── Processing live elapsed row ──────────────────────────────────────────── */
+.processing-meta-row {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  margin-top: 0.4rem;
+}
+
+.processing-elapsed {
+  font-weight: 700;
+  color: var(--accent);
+  font-size: 0.95rem;
+}
+
+.processing-hint {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+/* ── Decision card colored left border ────────────────────────────────────── */
+.decision-card--buy  { border-left: 4px solid #10b981; }
+.decision-card--sell { border-left: 4px solid #ef4444; }
+.decision-card--hold { border-left: 4px solid #f59e0b; }
+
+/* ── Stage icon ───────────────────────────────────────────────────────────── */
+.agent-stage-card__icon {
+  margin-right: 0.35em;
+  font-style: normal;
+}
+
+.agent-stage-detail__icon {
+  margin-right: 0.35em;
+}
+
+/* ── Stage content renderers ──────────────────────────────────────────────── */
+.stage-content-empty {
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-style: italic;
+}
+
+.stage-content-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 0.88rem;
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
+
+.stage-content-json {
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  overflow: auto;
+}
+
+.stage-content-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.stage-content-field__key {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 2px;
+}
+
+.stage-content-field__val {
+  font-size: 0.88rem;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.stage-content-raw details {
+  margin-top: 0.5rem;
+}
+
+.stage-content-raw summary {
+  font-size: 0.75rem;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.stage-content-raw pre {
+  margin-top: 0.4rem;
+  font-size: 0.78rem;
+  overflow: auto;
+  color: var(--text-secondary);
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPACT PROCESSING BAR
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.processing-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.5rem 0.9rem;
+  background: var(--surface-soft);
+  border-radius: 8px;
+  margin-bottom: 0.6rem;
+}
+
+.processing-bar__label {
+  flex: 1;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.processing-bar__label strong {
+  color: var(--text-primary);
+}
+
+.processing-bar__elapsed {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Small spinner variant */
+.spinner--sm {
+  width: 14px !important;
+  height: 14px !important;
+  border-width: 2px !important;
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   COMPACT DECISION CARD (single-row flex override)
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.decision-card {
+  display: flex !important;
+  align-items: center !important;
+  gap: 0.6rem !important;
+  padding: 0.6rem 1rem !important;
+  grid-template-columns: unset !important;
+}
+
+.decision-card .decision-label,
+.decision-card .confidence-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.decision-card .decision-action {
+  font-size: 1.25rem !important;
+  font-weight: 700;
+}
+
+.decision-card .confidence-value {
+  font-size: 1rem !important;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.decision-sep {
+  color: var(--panel-border);
+  font-weight: 300;
+}
+
+.decision-time {
+  margin-left: auto;
+  font-size: 0.78rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   ARM TABS
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.arm-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 4px 0 8px;
+}
+
+.arm-tabs button {
+  padding: 4px 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  background: transparent;
+  font-size: 0.8rem;
+  cursor: pointer;
+  color: var(--muted);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.arm-tabs button:hover {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+}
+
+.arm-tab--active {
+  background: var(--accent) !important;
+  color: #fff !important;
+  border-color: var(--accent) !important;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   STAGE MARKDOWN CONTENT
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.stage-markdown-content {
+  font-size: 0.875rem;
+  line-height: 1.75;
+  color: var(--text-secondary);
+}
+
+.stage-markdown-content h1,
+.stage-markdown-content h2,
+.stage-markdown-content h3,
+.stage-markdown-content h4 {
+  color: var(--text-primary);
+  margin: 0.85rem 0 0.3rem;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.stage-markdown-content p {
+  margin: 0.4rem 0;
+}
+
+.stage-markdown-content ul,
+.stage-markdown-content ol {
+  padding-left: 1.25rem;
+  margin: 0.35rem 0;
+}
+
+.stage-markdown-content li {
+  margin: 0.2rem 0;
+}
+
+.stage-markdown-content strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.stage-markdown-content em {
+  font-style: italic;
+  color: var(--text-primary);
+}
+
+.stage-markdown-content code {
+  background: var(--surface-soft);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 0.82rem;
+  font-family: 'Menlo', 'Monaco', monospace;
+  color: var(--accent);
+}
+
+.stage-markdown-content pre {
+  background: var(--surface-soft);
+  padding: 0.75rem;
+  border-radius: 6px;
+  overflow-x: auto;
+  margin: 0.5rem 0;
+}
+
+.stage-markdown-content pre code {
+  background: none;
+  padding: 0;
+  color: var(--text-secondary);
+}
+
+.stage-markdown-content blockquote {
+  border-left: 3px solid var(--accent);
+  margin: 0.5rem 0;
+  padding-left: 0.75rem;
+  color: var(--muted);
+}
+
+.stage-markdown-content table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+  font-size: 0.82rem;
+}
+
+.stage-markdown-content th,
+.stage-markdown-content td {
+  border: 1px solid var(--panel-border);
+  padding: 4px 8px;
+  text-align: left;
+}
+
+.stage-markdown-content th {
+  background: var(--surface-soft);
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+/* Blinking streaming cursor */
+.streaming-cursor {
+  display: inline-block;
+  animation: blink-cursor 0.8s step-end infinite;
+  font-weight: 700;
+  color: var(--accent);
+  margin-left: 1px;
+}
+
+@keyframes blink-cursor {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   AGENT FLOW GRAPH — SVG Styles
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+.flow-graph-svg {
+  width: 100%;
+  overflow: visible;
+  display: block;
+  margin: 0 auto;
+}
+
+/* Node base */
+.flow-node {
+  cursor: pointer;
+}
+
+.flow-node rect {
+  transition: fill 0.2s, stroke 0.2s, filter 0.2s;
+  stroke-width: 1.5;
+}
+
+.flow-node:hover rect {
+  filter: brightness(1.1);
+}
+
+.flow-node:focus {
+  outline: none;
+}
+
+.flow-node:focus rect {
+  stroke-width: 2.5;
+  filter: drop-shadow(0 0 4px var(--accent));
+}
+
+/* Status variants */
+.flow-node--pending   rect { fill: var(--surface-soft);        stroke: var(--panel-border); }
+.flow-node--processing rect { fill: rgba(37,99,235,0.07);       stroke: var(--accent); stroke-width: 2; }
+.flow-node--completed  rect { fill: rgba(22,163,74,0.07);       stroke: #16a34a; }
+.flow-node--failed     rect { fill: rgba(220,38,38,0.07);       stroke: #dc2626; }
+.flow-node--cancelled  rect { fill: rgba(107,114,128,0.07);    stroke: #6b7280; }
+.flow-node--selected   rect { stroke-width: 2.5 !important; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.18)) !important; }
+
+/* Node text */
+.flow-node__icon {
+  font-size: 14px;
+  pointer-events: none;
+  user-select: none;
+}
+
+.flow-node__label {
+  font-size: 9px;
+  fill: var(--text-secondary);
+  pointer-events: none;
+  user-select: none;
+}
+
+.flow-node__status-icon {
+  fill: var(--text-secondary);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Pulse animation for processing nodes */
+.flow-node__pulse {
+  fill: var(--accent);
+  animation: flow-node-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes flow-node-pulse {
+  0%, 100% { opacity: 1; r: 3; }
+  50%       { opacity: 0.3; r: 5; }
+}
+
+/* Edges */
+.flow-edge {
+  fill: none;
+  stroke: var(--panel-border);
+  stroke-width: 1.5;
+  transition: stroke 0.2s;
+}
+
+.flow-edge--done {
+  stroke: #16a34a;
+}
+
+.flow-edge--active {
+  stroke: var(--accent);
+  stroke-dasharray: 5 3;
+  animation: flow-dash 1.2s linear infinite;
+}
+
+@keyframes flow-dash {
+  to { stroke-dashoffset: -16; }
+}
+
+/* ── Flow detail panel (below the graph in graph-tab view) ── */
+.flow-detail-panel {
+  margin-top: 0.85rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--surface);
+  min-height: 100px;
 }

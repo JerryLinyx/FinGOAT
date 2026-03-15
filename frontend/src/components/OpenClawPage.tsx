@@ -118,7 +118,12 @@ function resolveAgentName(agent: GatewayAgentRow): string {
   return agent.identity?.name?.trim() || agent.name?.trim() || agent.id
 }
 
-export function OpenClawPage() {
+interface OpenClawPageProps {
+  onStatusChange?: (status: 'disconnected' | 'connecting' | 'connected') => void
+  onBindingsChange?: (bindings: Record<string, string>) => void
+}
+
+export function OpenClawPage({ onStatusChange, onBindingsChange }: OpenClawPageProps) {
   const storedConfig = readStoredJson<PersistedGatewayConfig>(OPENCLAW_CONFIG_STORAGE_KEY, {
     dashboardUrl: '',
   })
@@ -172,6 +177,16 @@ export function OpenClawPage() {
       clientRef.current = null
     }
   }, [])
+
+  // Sync gateway status to parent (config panel)
+  useEffect(() => {
+    onStatusChange?.(gatewayStatus)
+  }, [gatewayStatus, onStatusChange])
+
+  // Sync role bindings to parent (config panel)
+  useEffect(() => {
+    onBindingsChange?.(bindings)
+  }, [bindings, onBindingsChange])
 
   const allRolesMatched = useMemo(() => {
     return REQUIRED_ROLES.every((role) => Boolean(bindings[role.id]?.trim()))

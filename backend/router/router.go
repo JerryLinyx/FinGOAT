@@ -69,17 +69,29 @@ func InitRouter() *gin.Engine {
 		api.POST("/articles/:id/like", controllers.LikeArticle)
 		api.GET("/articles/:id/like", controllers.GetArticleLikes)
 
+		// User profile and API key routes
+		user := api.Group("/user")
+		{
+			user.GET("/profile", controllers.GetProfile)
+			user.PUT("/profile", controllers.UpdateProfile)
+			user.GET("/api-keys", controllers.GetAPIKeys)
+			user.PUT("/api-keys/:provider", controllers.UpsertAPIKey)
+			user.DELETE("/api-keys/:provider", controllers.DeleteAPIKey)
+		}
+
 		// Trading analysis routes
 		trading := api.Group("/trading")
 		{
 			trading.POST("/analyze", controllers.RequestAnalysis)
 			trading.GET("/analysis/:task_id", controllers.GetAnalysisResult)
+			trading.GET("/analysis/:task_id/stream", controllers.StreamAnalysisResult)
 			trading.POST("/analysis/:task_id/cancel", controllers.CancelAnalysis)
 			trading.POST("/analysis/:task_id/resume", controllers.ResumeAnalysis)
 			trading.GET("/analyses", controllers.ListUserAnalyses)
 			trading.GET("/stats", controllers.GetAnalysisStats)
 			trading.GET("/health", controllers.CheckServiceHealth)
 			trading.GET("/chart/:ticker", controllers.GetStockChart)
+			trading.GET("/ollama/models", controllers.GetOllamaModels)
 		}
 	}
 

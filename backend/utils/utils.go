@@ -2,11 +2,24 @@ package utils
 
 import (
 	"errors"
+	"log"
+	"os"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
+
+// jwtSecret returns the JWT signing secret from the JWT_SECRET environment
+// variable. Falls back to an insecure dev value and logs a warning if unset.
+func jwtSecret() []byte {
+	s := os.Getenv("JWT_SECRET")
+	if s == "" {
+		log.Println("[WARN] JWT_SECRET env var is not set; using insecure development fallback")
+		s = "JWT_SECRET_DEV_INSECURE"
+	}
+	return []byte(s)
+}
 
 func HashPassword(password string) (string, error) {
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
@@ -21,8 +34,11 @@ func GenerateJWT(username string) (string, error) {
 		"username": username,
 		"exp":      time.Now().Add(time.Hour * 24).Unix(),
 	})
-	tokenString, err := token.SignedString([]byte("JWT_SECRET"))
-	return "Bearer " + tokenString, err
+	tokenString, err := token.SignedString(jwtSecret())
+	if err != nil {
+		return "", err
+	}
+	return "Bearer " + tokenString, nil
 }
 
 func CheckPassword(password string, hashedPassword string) bool {
@@ -39,7 +55,7 @@ func ParseJWT(tokenString string) (string, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, errors.New("unexpected signing method")
 		}
-		return []byte("JWT_SECRET"), nil
+		return jwtSecret(), nil
 	})
 
 	if err != nil {

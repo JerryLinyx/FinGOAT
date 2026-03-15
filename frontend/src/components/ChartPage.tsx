@@ -18,6 +18,27 @@ const getViewOption = (id: ViewOptionId): ViewOption => {
     return VIEW_OPTIONS.find(option => option.id === id) ?? VIEW_OPTIONS[0]
 }
 
+const HISTORY_KEY = 'fingoat_chart_history'
+const MAX_HISTORY = 8
+
+function loadHistory(): string[] {
+    try {
+        const raw = localStorage.getItem(HISTORY_KEY)
+        return raw ? JSON.parse(raw) : []
+    } catch {
+        return []
+    }
+}
+
+function saveHistory(tickers: string[]) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(tickers))
+}
+
+function addToHistory(current: string[], ticker: string): string[] {
+    const deduped = current.filter(t => t !== ticker)
+    return [ticker, ...deduped].slice(0, MAX_HISTORY)
+}
+
 interface ChartPageProps {
     onSessionExpired?: () => void
 }
@@ -29,6 +50,7 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
     const [loading, setLoading] = useState(false)
     const [error, setError] = useState('')
     const [data, setData] = useState<OHLCVPoint[]>([])
+    const [history, setHistory] = useState<string[]>(loadHistory)
 
     const chartContainerRef = useRef<HTMLDivElement>(null)
     const chartRef = useRef<IChartApi | null>(null)
@@ -43,6 +65,13 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
             const result = await tradingService.getStockChart(t.trim().toUpperCase(), selectedView.range)
             setData(result.data)
             setActiveTicker(result.ticker)
+
+            // Update history
+            setHistory(prev => {
+                const updated = addToHistory(prev, result.ticker)
+                saveHistory(updated)
+                return updated
+            })
         } catch (err) {
             const msg = err instanceof Error ? err.message : 'Failed to load chart'
             setError(msg)
@@ -66,6 +95,16 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
         if (activeTicker) {
             fetchChart(activeTicker, viewId)
         }
+    }
+
+    const handleHistoryClick = (t: string) => {
+        setTicker(t)
+        fetchChart(t, view)
+    }
+
+    const handleClearHistory = () => {
+        setHistory([])
+        localStorage.removeItem(HISTORY_KEY)
     }
 
     const selectedView = getViewOption(view)
@@ -203,6 +242,35 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
                     ))}
                 </div>
             </form>
+
+            {/* Query history row */}
+            {history.length > 0 && (
+                <div className="chart-history">
+                    <span className="chart-history-label">Recent</span>
+                    <div className="chart-history-chips">
+                        {history.map(t => (
+                            <button
+                                key={t}
+                                type="button"
+                                className={`chart-history-chip ${t === activeTicker ? 'chart-history-chip--active' : ''}`}
+                                onClick={() => handleHistoryClick(t)}
+                                disabled={loading}
+                            >
+                                {t}
+                            </button>
+                        ))}
+                    </div>
+                    <button
+                        type="button"
+                        className="chart-history-clear"
+                        onClick={handleClearHistory}
+                        title="Clear history"
+                        aria-label="Clear search history"
+                    >
+                        ✕
+                    </button>
+                </div>
+            )}
 
             {error && <div className="chart-error">{error}</div>}
 

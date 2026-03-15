@@ -52,7 +52,7 @@ Reduce future iteration cost.
 - Frontend state/module cleanup
 - User profile page + backend profile API
 - User API key configuration page + secure key management contract
-- Chart query history panel (deduplicated symbols + recency pin-to-top)
+- [x] Chart query history panel (deduplicated symbols + recency pin-to-top)
 - Trading analysis duplicate guard (same symbol + same date requires user confirmation)
 - Devlog and appendix structure finalized in-repo
 

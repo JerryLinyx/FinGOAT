@@ -11,6 +11,7 @@ import (
 func MigrateDB() {
 	err := global.DB.AutoMigrate(
 		&models.User{},
+		&models.UserAPIKey{},
 		&models.Article{},
 		&models.FeedIngestRun{},
 		&models.ExchangeRate{},

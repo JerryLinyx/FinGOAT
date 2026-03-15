@@ -13,6 +13,13 @@ except Exception:  # pragma: no cover - optional dependency
     ChatOllama = None
 
 
+def normalize_provider_name(provider: str) -> str:
+    normalized = (provider or "openai").lower()
+    if normalized == "aliyun":
+        return "dashscope"
+    return normalized
+
+
 def _common_kwargs(config: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "temperature": config.get("llm_temperature", 0.2),
@@ -28,14 +35,14 @@ def _resolve_api_key(provider: str, config: Dict[str, Any]) -> str:
     if os.getenv("LLM_API_KEY"):
         return os.getenv("LLM_API_KEY", "")
 
-    provider = provider.lower()
+    provider = normalize_provider_name(provider)
     if provider in {"openai", "openai-compatible", "vllm"}:
         return os.getenv("OPENAI_API_KEY", "")
     if provider == "openrouter":
         return os.getenv("OPENROUTER_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
     if provider == "deepseek":
         return os.getenv("DEEPSEEK_API_KEY", "") or os.getenv("OPENAI_API_KEY", "")
-    if provider == "aliyun":
+    if provider == "dashscope":
         return os.getenv("DASHSCOPE_API_KEY", "")
     if provider == "anthropic":
         return os.getenv("CLAUDE_API_KEY", "") or os.getenv("ANTHROPIC_API_KEY", "")
@@ -52,7 +59,7 @@ def build_llm(config: Dict[str, Any], which: str = "quick"):
 
     which: "quick" or "deep"
     """
-    provider = config.get("llm_provider", "openai").lower()
+    provider = normalize_provider_name(config.get("llm_provider", "openai"))
     base_url = config.get("backend_url")
     model = config["deep_think_llm"] if which == "deep" else config["quick_think_llm"]
     api_key = _resolve_api_key(provider, config)
@@ -61,8 +68,8 @@ def build_llm(config: Dict[str, Any], which: str = "quick"):
     if provider in {"openai", "openrouter", "openai-compatible", "vllm", "deepseek"}:
         return ChatOpenAI(model=model, base_url=base_url, api_key=api_key, **_common_kwargs(config))
 
-    if provider == "aliyun":
-        # Aliyun DashScope OpenAI-compatible endpoint
+    if provider == "dashscope":
+        # DashScope OpenAI-compatible endpoint
         if not base_url:
             base_url = "https://dashscope.aliyuncs.com/compatible-mode/v1"
         if not api_key:

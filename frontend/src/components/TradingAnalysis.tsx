@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
-import { tradingService, type AnalysisTask } from '../services/tradingService'
+import { tradingService, type AnalysisTask, type StreamEvent } from '../services/tradingService'
 import { AgentResultsModule } from './AgentResultsModule'
 import '../TradingAnalysis.css'
 
@@ -24,6 +24,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
     const [error, setError] = useState('')
     const [currentTask, setCurrentTask] = useState<AnalysisTask | null>(null)
     const [previousAnalyses, setPreviousAnalyses] = useState<AnalysisTask[]>([])
+    const [stageTokens, setStageTokens] = useState<Map<string, string>>(new Map())
     const pollingTaskIdRef = useRef<string | null>(null)
     const pollCancelledRef = useRef(false)
 
@@ -52,7 +53,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
             }
             return task
         })
-        setLoading(task?.status === 'processing')
+        setLoading(task?.status === 'processing' || task?.status === 'pending')
         persistActiveTask(task)
     }, [persistActiveTask])
 
@@ -77,6 +78,45 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         }
     }, [])
 
+    // Live 1-second tick — drives both the elapsed counter and the relative-time labels
+    const [, setTickCount] = useState(0)
+    useEffect(() => {
+        if (!currentTask || (currentTask.status !== 'processing' && currentTask.status !== 'pending')) return
+        const id = setInterval(() => setTickCount((n) => n + 1), 1000)
+        return () => clearInterval(id)
+    }, [currentTask?.task_id, currentTask?.status])
+
+    // ── SSE streaming connection ──────────────────────────────────────────────
+    useEffect(() => {
+        if (!currentTask?.task_id) return
+        if (currentTask.status === 'completed' || currentTask.status === 'failed' || currentTask.status === 'cancelled') return
+
+        const token = tradingService.getAuthToken() ?? ''
+        if (!token) return
+
+        setStageTokens(new Map()) // reset on new task / status change
+
+        const cleanup = tradingService.streamAnalysis(currentTask.task_id, (event: StreamEvent) => {
+            if (event.type === 'token' && event.stage_id && event.t) {
+                setStageTokens(prev => {
+                    const next = new Map(prev)
+                    next.set(event.stage_id!, (next.get(event.stage_id!) ?? '') + event.t!)
+                    return next
+                })
+            } else if (event.type === 'stage_end') {
+                // Refresh task state for updated stages
+                tradingService.getAnalysisResult(currentTask.task_id).then(applyTaskState).catch(() => {})
+            } else if (event.type === 'task_complete' || event.type === 'task_error') {
+                tradingService.getAnalysisResult(currentTask.task_id).then(applyTaskState).catch(() => {})
+                loadPreviousAnalyses()
+            }
+        }, token)
+
+        return () => {
+            cleanup()
+        }
+    }, [currentTask?.task_id, currentTask?.status, applyTaskState, loadPreviousAnalyses])
+
     const pollTask = useCallback(async (taskId: string) => {
         pollingTaskIdRef.current = taskId
         pollCancelledRef.current = false
@@ -91,7 +131,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 return latestTask
             }
 
-            await new Promise((resolve) => setTimeout(resolve, 8000))
+            await new Promise((resolve) => setTimeout(resolve, 4000))
         }
 
         return null
@@ -134,8 +174,21 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         setDate(e.target.value)
     }
 
+    const [isLaunching, setIsLaunching] = useState(false)
+
     const handleSubmit = async (e: FormEvent) => {
         e.preventDefault()
+        if (!ticker.trim() || loading) return
+
+        setError('')
+        setIsLaunching(true)
+        
+        // Brief delay to let the rocket launch animation play
+        await new Promise(resolve => setTimeout(resolve, 600))
+        
+        setIsLaunching(false)
+        setLoading(true)
+        applyTaskState(null)
 
         if (!ticker.trim()) {
             setError('Please enter a stock ticker')
@@ -227,6 +280,48 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         return `${(confidence * 100).toFixed(1)}%`
     }
 
+    const formatElapsed = (startIso?: string) => {
+        if (!startIso) return ''
+        const seconds = Math.floor((Date.now() - new Date(startIso).getTime()) / 1000)
+        if (seconds < 0) return ''
+        const m = Math.floor(seconds / 60)
+        const s = seconds % 60
+        return m > 0 ? `${m}m ${s.toString().padStart(2, '0')}s` : `${s}s`
+    }
+
+    const formatRelativeTime = (value?: string) => {
+        if (!value) return 'N/A'
+        const parsed = new Date(value)
+        if (Number.isNaN(parsed.getTime())) return 'N/A'
+        const diffMs = Date.now() - parsed.getTime()
+        const diffSec = Math.max(0, Math.round(diffMs / 1000))
+        if (diffSec < 10) return 'just now'
+        if (diffSec < 60) return `${diffSec}s ago`
+        const diffMin = Math.round(diffSec / 60)
+        if (diffMin < 60) return `${diffMin}m ago`
+        const diffHr = Math.round(diffMin / 60)
+        if (diffHr < 24) return `${diffHr}h ago`
+        return parsed.toLocaleString()
+    }
+
+    const getStageStats = (task: AnalysisTask | null) => {
+        const stages = task?.stages ?? []
+        const completed = stages.filter((stage) => stage.status === 'completed').length
+        const processingStage = stages.find((stage) => stage.status === 'processing')
+        const failedStage = stages.find((stage) => stage.status === 'failed')
+        const activeLabel =
+            failedStage?.label ??
+            processingStage?.label ??
+            stages.find((stage) => stage.status === 'completed')?.label ??
+            null
+        return {
+            total: stages.length,
+            completed,
+            percent: stages.length > 0 ? Math.round((completed / stages.length) * 100) : 0,
+            activeLabel,
+        }
+    }
+
     const getStatusColor = (status: string) => {
         switch (status) {
             case 'completed':
@@ -257,6 +352,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
 
     const renderAnalysisResult = () => {
         if (!currentTask) return null
+        const stageStats = getStageStats(currentTask)
+        const lastUpdatedLabel = formatRelativeTime(currentTask.updated_at)
 
         return (
             <div className="analysis-result">
@@ -300,53 +397,52 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                     </div>
                 </div>
 
+
                 {currentTask.status === 'pending' && (
                     <>
-                        <div className="processing-indicator">
-                            <div className="spinner"></div>
-                            <p>{currentTask.ticker} is queued for analysis.</p>
-                            <small>Waiting for an available worker</small>
+                        <div className="processing-bar">
+                            <div className="spinner spinner--sm"></div>
+                            <span className="processing-bar__label">
+                                <strong>{currentTask.ticker}</strong> is queued · {lastUpdatedLabel}
+                            </span>
                         </div>
-                        <AgentResultsModule task={currentTask} />
+                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
                     </>
                 )}
 
                 {currentTask.status === 'processing' && (
                     <>
-                        <div className="processing-indicator">
-                            <div className="spinner"></div>
-                            <p>Analyzing {currentTask.ticker}... This may take 2-5 minutes.</p>
-                            <small>Multi-agent analysis in progress</small>
+                        <div className="processing-bar">
+                            <div className="spinner spinner--sm"></div>
+                            <span className="processing-bar__label">
+                                Analyzing <strong>{currentTask.ticker}</strong>
+                                {stageStats.activeLabel && <> · {stageStats.activeLabel}</>}
+                            </span>
+                            <span className="processing-bar__elapsed">⏱ {formatElapsed(currentTask.created_at)}</span>
                         </div>
-                        <AgentResultsModule task={currentTask} />
+                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
                     </>
                 )}
 
                 {currentTask.status === 'completed' && currentTask.decision && (
                     <div className="decision-result">
-                        <div className="decision-card">
-                            <div className="decision-main">
-                                <span className="decision-label">Decision</span>
-                                <span
-                                    className="decision-action"
-                                    style={{ color: getDecisionColor(currentTask.decision.action) }}
-                                >
-                                    {currentTask.decision.action}
-                                </span>
-                            </div>
-                            <div className="decision-confidence">
-                                <span className="confidence-label">Confidence</span>
-                                <span className="confidence-value">{formatConfidence(currentTask.decision.confidence)}</span>
-                            </div>
+                        <div className={`decision-card decision-card--${currentTask.decision.action?.toLowerCase() ?? 'hold'}`}>
+                            <span className="decision-label">Decision</span>
+                            <span
+                                className="decision-action"
+                                style={{ color: getDecisionColor(currentTask.decision.action) }}
+                            >
+                                {currentTask.decision.action}
+                            </span>
+                            <span className="decision-sep">·</span>
+                            <span className="confidence-label">Confidence</span>
+                            <span className="confidence-value">{formatConfidence(currentTask.decision.confidence)}</span>
+                            {currentTask.processing_time_seconds && (
+                                <span className="decision-time">⏱ {Math.round(currentTask.processing_time_seconds)}s</span>
+                            )}
                         </div>
 
-                        {currentTask.processing_time_seconds && (
-                            <div className="analysis-meta">
-                                <span>⏱️ Analysis completed in {Math.round(currentTask.processing_time_seconds)}s</span>
-                            </div>
-                        )}
-
-                        <AgentResultsModule task={currentTask} />
+                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
 
                         {currentTask.analysis_report && (
                             <details className="analysis-details">
@@ -365,7 +461,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             <p>❌ Analysis failed</p>
                             {currentTask.error && <small>{currentTask.error}</small>}
                         </div>
-                        <AgentResultsModule task={currentTask} />
+                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
                     </>
                 )}
 
@@ -375,7 +471,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             <p>⏹ Analysis cancelled</p>
                             {currentTask.error && <small>{currentTask.error}</small>}
                         </div>
-                        <AgentResultsModule task={currentTask} />
+                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
                     </>
                 )}
             </div>
@@ -417,13 +513,15 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
 
                 <button
                     type="submit"
-                    className="analyze-button"
-                    disabled={loading || !ticker.trim()}
+                    className={`analyze-button ${isLaunching ? 'launching' : ''}`}
+                    disabled={loading || isLaunching || !ticker.trim()}
                 >
-                    {loading ? (
+                    {(loading || isLaunching) ? (
                         <>
-                            <span className="button-spinner"></span>
-                            Analyzing...
+                            <span className={isLaunching ? 'rocket-icon launching' : 'button-spinner'}>
+                                {isLaunching ? '🚀' : ''}
+                            </span>
+                            {isLaunching ? 'Launching...' : 'Analyzing...'}
                         </>
                     ) : (
                         <>
@@ -467,6 +565,17 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                                             {task.llm_provider}{task.llm_model ? ` / ${task.llm_model}` : ''}
                                         </span>
                                     )}
+                                </div>
+                                <div className="item-meta-row">
+                                    <span className="item-provider">
+                                        Updated {formatRelativeTime(task.updated_at)}
+                                    </span>
+                                    <span className="item-provider">
+                                        {(() => {
+                                            const stats = getStageStats(task)
+                                            return stats.total > 0 ? `${stats.completed}/${stats.total} stages` : 'No stage data'
+                                        })()}
+                                    </span>
                                 </div>
                             </button>
                         ))}

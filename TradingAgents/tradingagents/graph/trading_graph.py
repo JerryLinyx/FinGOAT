@@ -42,6 +42,31 @@ from .reflection import Reflector
 from .signal_processing import SignalProcessor
 
 
+# ── Streaming helpers ────────────────────────────────────────────────────────
+
+# Maps LangGraph node name → frontend stage_id used in StageProgress
+NODE_TO_STAGE: dict = {
+    "Market Analyst":       "market",
+    "Social Analyst":       "social",
+    "News Analyst":         "news",
+    "Fundamentals Analyst": "fundamentals",
+    "Bull Researcher":      "research_debate",
+    "Bear Researcher":      "research_debate",
+    "Research Manager":     "portfolio_manager",   # fills investment_plan
+    "Trader":               "trader_plan",
+    "Risky Analyst":        "risk_debate",
+    "Safe Analyst":         "risk_debate",
+    "Neutral Analyst":      "risk_debate",
+    "Risk Judge":           "risk_management",
+}
+
+# Tool / join nodes that produce no meaningful LLM tokens
+SKIP_NODES: frozenset = frozenset({
+    "Analyst Join", "Analyst Wait", "Msg Clear Analysts",
+    "tools_market", "tools_social", "tools_news", "tools_fundamentals",
+})
+
+
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
 
@@ -201,6 +226,52 @@ class TradingAgentsGraph:
             return latest_chunk
 
         return await self.graph.ainvoke(init_agent_state, **args)
+
+    async def propagate_streaming(
+        self,
+        company_name: str,
+        trade_date: str,
+        token_callback: Callable[[str, str, str], Awaitable[None]],
+        stage_end_callback: Callable[[str, Dict[str, Any]], Awaitable[None]],
+    ) -> Dict[str, Any]:
+        """Stream analysis via astream_events, calling callbacks per-token and per-node.
+
+        Args:
+            company_name: Stock ticker symbol
+            trade_date: Analysis date string (YYYY-MM-DD)
+            token_callback: async (stage_id, node_name, token_text) -> None
+            stage_end_callback: async (stage_id, state_snapshot) -> None
+
+        Returns:
+            Final merged state dict
+        """
+        init_state = self.propagator.create_initial_state(company_name, trade_date)
+        base_args = self.propagator.get_graph_args()
+        # astream_events does NOT accept stream_mode — only pass config
+        events_config = {"config": base_args.get("config", {})}
+
+        last_state: Dict[str, Any] = dict(init_state) if isinstance(init_state, dict) else {}
+
+        async for event in self.graph.astream_events(init_state, **events_config, version="v2"):
+            etype = event.get("event", "")
+            node = event.get("metadata", {}).get("langgraph_node", "")
+
+            if etype == "on_chat_model_stream" and node not in SKIP_NODES:
+                chunk = event["data"].get("chunk")
+                token = getattr(chunk, "content", "") if chunk else ""
+                stage_id = NODE_TO_STAGE.get(node)
+                if token and stage_id:
+                    await token_callback(stage_id, node, token)
+
+            elif etype == "on_chain_end" and node not in SKIP_NODES:
+                output = event["data"].get("output", {})
+                if isinstance(output, dict):
+                    last_state.update(output)
+                stage_id = NODE_TO_STAGE.get(node)
+                if stage_id:
+                    await stage_end_callback(stage_id, last_state)
+
+        return last_state
 
     def _log_state(self, trade_date, final_state):
         """Log the final state to a JSON file."""

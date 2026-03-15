@@ -56,7 +56,24 @@ class EmbeddingSettingsTest(unittest.TestCase):
         self.assertEqual(base_url, "http://ollama-host:11434/v1")
         self.assertEqual(api_key, "local-key")
 
-    def test_aliyun_still_uses_dashscope_defaults(self) -> None:
+    def test_dashscope_ignores_generic_embed_overrides(self) -> None:
+        with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "dash-key"}, clear=False):
+            with patch.dict(
+                os.environ,
+                {
+                    "EMBED_MODEL": "nomic-embed-text",
+                    "EMBED_BASE_URL": "http://localhost:11434/v1",
+                    "EMBED_API_KEY": "ollama",
+                },
+                clear=False,
+            ):
+                model, base_url, api_key = MODULE._resolve_embedding_settings({"llm_provider": "dashscope"})
+
+        self.assertEqual(model, "text-embedding-v4")
+        self.assertEqual(base_url, MODULE.DASHSCOPE_COMPAT_BASE_URL)
+        self.assertEqual(api_key, "dash-key")
+
+    def test_aliyun_alias_maps_to_dashscope_defaults(self) -> None:
         with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "dash-key"}, clear=False):
             model, base_url, api_key = MODULE._resolve_embedding_settings({"llm_provider": "aliyun"})
 

@@ -13,6 +13,10 @@ import { TradingAnalysis } from './components/TradingAnalysis'
 import { ChartPage } from './components/ChartPage'
 import { OpenClawPage } from './components/OpenClawPage'
 import { FeedPage } from './components/FeedPage'
+import { ProfilePage } from './components/ProfilePage'
+import { getProfile } from './services/userService'
+import { tradingService, type OllamaModel } from './services/tradingService'
+import type { UserProfile } from './types/user'
 
 type AuthMode = 'login' | 'register'
 type View = 'auth' | 'home'
@@ -20,6 +24,28 @@ type Theme = 'light' | 'dark'
 type CollapsiblePanel = 'config'
 type DragPanel = 'config' | null
 type ActiveTab = 'dashboard' | 'feed' | 'chart' | 'openclaw'
+type ExecutionMode = 'api' | 'ollama' | 'openclaw'
+type OpenClawStatus = 'disconnected' | 'connecting' | 'connected'
+type RoleBindings = Record<'market' | 'social' | 'news' | 'fundamentals', string>
+
+const REQUIRED_ROLES = [
+  { id: 'market' as const, label: 'Market Analyst' },
+  { id: 'social' as const, label: 'Social Analyst' },
+  { id: 'news' as const, label: 'News Analyst' },
+  { id: 'fundamentals' as const, label: 'Fundamentals Analyst' },
+] as const
+
+const OPENCLAW_BINDINGS_KEY = 'fingoat_openclaw_bindings'
+const ANALYSIS_DRAFT_KEY = 'fingoat_analysis_draft'
+
+function readOpenClawBindings(): RoleBindings {
+  if (typeof window === 'undefined') return { market: '', social: '', news: '', fundamentals: '' }
+  try {
+    const raw = localStorage.getItem(OPENCLAW_BINDINGS_KEY)
+    if (raw) return JSON.parse(raw) as RoleBindings
+  } catch { /* ignore */ }
+  return { market: '', social: '', news: '', fundamentals: '' }
+}
 
 
 
@@ -109,16 +135,29 @@ const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/$/, '') : ''
 
 
 const initialForm = {
-  username: '',
+  identifier: '',   // login: email or username
+  email: '',        // register: email (required)
+  displayName: '',  // register: display name (optional)
   password: '',
   confirmPassword: '',
 }
 
+type AnalysisDraft = {
+  executionMode: ExecutionMode
+  llmProvider: string
+  llmModel: string
+  llmBaseUrl: string
+  riskTolerance: number
+}
 
+const normalizeProviderName = (provider: string | undefined | null): string => {
+  if (!provider) return 'openai'
+  return provider === 'aliyun' ? 'dashscope' : provider
+}
 
 const RISK_LABELS = ['Conservative', 'Moderate', 'Aggressive'] as const
-const SIDE_PANEL_MIN_WIDTH = 240
-const SIDE_PANEL_MAX_WIDTH = 460
+const SIDE_PANEL_MIN_WIDTH = 280
+const SIDE_PANEL_MAX_WIDTH = 360
 const SIDE_PANEL_COLLAPSED_WIDTH = 84
 const DESKTOP_BREAKPOINT = 900
 
@@ -145,22 +184,51 @@ function App() {
   const [llmProvider, setLlmProvider] = useState('ollama')
   const [llmModel, setLlmModel] = useState('gemma3:1b')
   const [llmBaseUrl, setLlmBaseUrl] = useState('http://localhost:11434')
-  const [executionMode, setExecutionMode] = useState<'default' | 'openclaw'>('default')
+  const [executionMode, setExecutionMode] = useState<ExecutionMode>('ollama')
+  const [openclawStatus, setOpenclawStatus] = useState<OpenClawStatus>('disconnected')
+  const [openclawBindings, setOpenclawBindings] = useState<RoleBindings>(readOpenClawBindings)
   const [riskTolerance, setRiskTolerance] = useState(1)
+  const [draftMessage, setDraftMessage] = useState('')
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
+  const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
+  const [ollamaModelsError, setOllamaModelsError] = useState('')
+  const ollamaLoadedHostRef = useRef<string | null>(null)
   const [collapsedPanels, setCollapsedPanels] = useState<Record<CollapsiblePanel, boolean>>({
     config: false,
   })
   const [panelWidths, setPanelWidths] = useState<Record<CollapsiblePanel, number>>({
-    config: 320,
+    config: 300,
   })
   const [draggingPanel, setDraggingPanel] = useState<DragPanel>(null)
   const [isDesktopLayout, setIsDesktopLayout] = useState(() =>
     typeof window === 'undefined' ? true : window.innerWidth > DESKTOP_BREAKPOINT,
   )
 
+  // User identity & profile overlay
+  const [currentUser, setCurrentUser] = useState<UserProfile | null>(null)
+  const [showProfile, setShowProfile] = useState(false)
+  const [showUserMenu, setShowUserMenu] = useState(false)
+  const userMenuRef = useRef<HTMLDivElement | null>(null)
+
   useEffect(() => {
     localStorage.setItem('fingoat_theme', theme)
   }, [theme])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    try {
+      const raw = localStorage.getItem(ANALYSIS_DRAFT_KEY)
+      if (!raw) return
+      const draft = JSON.parse(raw) as Partial<AnalysisDraft>
+      if (draft.executionMode) setExecutionMode(draft.executionMode)
+      if (draft.llmProvider) setLlmProvider(normalizeProviderName(draft.llmProvider))
+      if (draft.llmModel) setLlmModel(draft.llmModel)
+      if (typeof draft.llmBaseUrl === 'string') setLlmBaseUrl(draft.llmBaseUrl)
+      if (typeof draft.riskTolerance === 'number') setRiskTolerance(draft.riskTolerance)
+    } catch {
+      // ignore malformed drafts
+    }
+  }, [])
 
 
 
@@ -171,8 +239,24 @@ function App() {
   useEffect(() => {
     if (localStorage.getItem(TOKEN_STORAGE_KEY)) {
       setView('home')
+      // Restore user profile state on page reload
+      getProfile()
+        .then(setCurrentUser)
+        .catch(() => { /* non-fatal */ })
     }
   }, [])
+
+  // Close user dropdown when clicking outside it
+  useEffect(() => {
+    if (!showUserMenu) return undefined
+    const handler = (e: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target as Node)) {
+        setShowUserMenu(false)
+      }
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [showUserMenu])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -213,7 +297,9 @@ function App() {
     setShowPassword(false)
     setSuccess('')
     setError(message ?? '')
-
+    setCurrentUser(null)
+    setShowProfile(false)
+    setShowUserMenu(false)
   }, [])
 
 
@@ -230,12 +316,20 @@ function App() {
     setError('')
     setSuccess('')
 
-    if (!form.username.trim() || !form.password) {
-      setError('Please fill in both username and password.')
-      return
-    }
-
-    if (mode === 'register') {
+    if (mode === 'login') {
+      if (!form.identifier.trim() || !form.password) {
+        setError('Please fill in your email/username and password.')
+        return
+      }
+    } else {
+      if (!form.email.trim() || !form.password) {
+        setError('Please fill in your email and password.')
+        return
+      }
+      if (!form.email.includes('@')) {
+        setError('Please enter a valid email address.')
+        return
+      }
       if (form.password.length < 8) {
         setError('Password must be at least 8 characters long.')
         return
@@ -246,10 +340,11 @@ function App() {
       }
     }
 
-    const payload = {
-      username: form.username.trim(),
-      password: form.password,
-    }
+    const payload =
+      mode === 'login'
+        ? { identifier: form.identifier.trim(), password: form.password }
+        : { email: form.email.trim(), display_name: form.displayName.trim(), password: form.password }
+
     const endpoint = mode === 'login' ? '/api/auth/login' : '/api/auth/register'
 
     try {
@@ -273,6 +368,13 @@ function App() {
       if (typeof data?.token === 'string') {
         localStorage.setItem(TOKEN_STORAGE_KEY, data.token)
         setSuccess(mode === 'login' ? 'Welcome back!' : 'Account created.')
+        // Fetch profile to populate user state
+        try {
+          const profile = await getProfile()
+          setCurrentUser(profile)
+        } catch {
+          // Non-fatal: user will see username from token
+        }
         setTimeout(() => setView('home'), 400)
       } else {
         setError('The server response did not include a token.')
@@ -306,7 +408,7 @@ function App() {
     anthropic: ['claude-3-haiku-20240307', 'claude-3-5-sonnet-latest'],
     google: ['gemini-1.5-flash', 'gemini-1.5-pro'],
     deepseek: ['deepseek-chat'],
-    aliyun: [
+    dashscope: [
       'qwen3.5-flash',
       'deepseek-v3.2',
       'glm-4.6',
@@ -349,14 +451,14 @@ function App() {
   const BASE_DEFAULTS: Record<string, string> = {
     openai: 'https://api.openai.com/v1',
     deepseek: 'https://api.deepseek.com/v1',
-    aliyun: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     'openai-compatible': 'http://localhost:8009/v1',
     vllm: 'http://localhost:8009/v1',
     ollama: 'http://localhost:11434',
   }
 
   const handleLlmProviderChange = (e: ChangeEvent<HTMLSelectElement>) => {
-    const value = e.target.value
+    const value = normalizeProviderName(e.target.value)
     setLlmProvider(value)
     const presets = MODEL_PRESETS[value] || []
     if (presets.length > 0) {
@@ -376,6 +478,64 @@ function App() {
   const handleLlmBaseUrlChange = (e: ChangeEvent<HTMLInputElement>) => {
     setLlmBaseUrl(e.target.value)
   }
+
+  const handleExecutionModeChange = (mode: ExecutionMode) => {
+    setExecutionMode(mode)
+    if (mode === 'ollama') {
+      setLlmProvider('ollama')
+      setLlmModel((prev) => (MODEL_PRESETS.ollama.includes(prev) ? prev : 'gemma3:1b'))
+      setLlmBaseUrl('http://localhost:11434')
+    } else if (mode === 'api' && llmProvider === 'ollama') {
+      setLlmProvider('openai')
+      setLlmModel('gpt-4o-mini')
+      setLlmBaseUrl('https://api.openai.com/v1')
+    }
+    // openclaw: no LLM config changes needed
+  }
+
+  const saveAnalysisDraft = useCallback(() => {
+    const draft: AnalysisDraft = {
+      executionMode,
+      llmProvider,
+      llmModel,
+      llmBaseUrl,
+      riskTolerance,
+    }
+    localStorage.setItem(ANALYSIS_DRAFT_KEY, JSON.stringify(draft))
+    setDraftMessage(`Saved ${new Date().toLocaleTimeString()}`)
+    window.setTimeout(() => setDraftMessage(''), 2200)
+  }, [executionMode, llmBaseUrl, llmModel, llmProvider, riskTolerance])
+
+  const detectOllamaModels = useCallback(async (force = false) => {
+    const targetHost = llmBaseUrl.trim() || 'http://localhost:11434'
+    if (!force && ollamaLoadedHostRef.current === targetHost && ollamaModels.length > 0) {
+      return
+    }
+    try {
+      setOllamaModelsLoading(true)
+      setOllamaModelsError('')
+      const result = await tradingService.getOllamaModels(targetHost)
+      setOllamaModels(result.models)
+      ollamaLoadedHostRef.current = result.base_url
+    } catch (err) {
+      setOllamaModels([])
+      setOllamaModelsError(err instanceof Error ? err.message : 'Failed to detect Ollama models')
+    } finally {
+      setOllamaModelsLoading(false)
+    }
+  }, [llmBaseUrl, ollamaModels.length])
+
+  useEffect(() => {
+    if (executionMode !== 'ollama') return
+    void detectOllamaModels()
+  }, [detectOllamaModels, executionMode])
+
+  const ollamaModelOptions = useMemo(() => {
+    const merged = new Set<string>()
+    MODEL_PRESETS.ollama.forEach((model) => merged.add(model))
+    ollamaModels.forEach((model) => merged.add(model.name))
+    return Array.from(merged)
+  }, [ollamaModels])
 
   const togglePanelCollapse = (panel: CollapsiblePanel) => {
     setCollapsedPanels((prev) => ({
@@ -446,6 +606,14 @@ function App() {
 
   const dashboardView = (
     <div className="dashboard">
+      {/* Profile overlay — rendered on top of everything when open */}
+      {showProfile && (
+        <ProfilePage
+          initialProfile={currentUser}
+          onClose={() => setShowProfile(false)}
+          onProfileUpdate={(p) => setCurrentUser(p)}
+        />
+      )}
       <header className="top-nav">
         <div className="brand">
           <div className="brand-mark" aria-label="FinGOAT logo">🐐</div>
@@ -498,9 +666,42 @@ function App() {
               <path d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" />
             </svg>
           </a>
-          <button type="button" className="logout-btn" onClick={handleLogout}>
-            Logout
-          </button>
+
+          {/* User menu */}
+          <div className="user-menu-wrapper" ref={userMenuRef}>
+            <button
+              type="button"
+              className="user-menu-btn"
+              onClick={() => setShowUserMenu((v) => !v)}
+              aria-expanded={showUserMenu}
+              aria-haspopup="menu"
+            >
+              {currentUser?.display_name || currentUser?.username || 'Account'}
+              <svg viewBox="0 0 16 16" width="12" height="12" fill="currentColor" aria-hidden="true" style={{ marginLeft: '0.35rem' }}>
+                <path d="M4 6l4 4 4-4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </svg>
+            </button>
+            {showUserMenu && (
+              <div className="user-dropdown" role="menu">
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="user-dropdown__item"
+                  onClick={() => { setShowUserMenu(false); setShowProfile(true) }}
+                >
+                  Profile
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  className="user-dropdown__item user-dropdown__item--danger"
+                  onClick={handleLogout}
+                >
+                  Logout
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -509,7 +710,10 @@ function App() {
       ) : activeTab === 'chart' ? (
         <ChartPage onSessionExpired={resetSession} />
       ) : activeTab === 'openclaw' ? (
-        <OpenClawPage />
+        <OpenClawPage
+          onStatusChange={setOpenclawStatus}
+          onBindingsChange={(b) => setOpenclawBindings(b as RoleBindings)}
+        />
       ) : (
       <main
         ref={dashboardGridRef}
@@ -517,7 +721,7 @@ function App() {
         style={
           isDesktopLayout
             ? {
-              gridTemplateColumns: `${isConfigCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.config}px 14px minmax(0, 1fr)`,
+              gridTemplateColumns: `${isConfigCollapsed ? SIDE_PANEL_COLLAPSED_WIDTH : panelWidths.config}px 6px minmax(0, 1fr)`,
             }
             : undefined
         }
@@ -533,86 +737,199 @@ function App() {
 
           {!isConfigCollapsed && (
           <div className="panel-body scrollable">
-            <div className="config-group">
-              <label className="config-label" htmlFor="ai-model">
-                LLM Provider
-              </label>
-              <select id="ai-model" value={llmProvider} onChange={handleLlmProviderChange}>
-                <option value="openai">OpenAI</option>
-                <option value="anthropic">Anthropic</option>
-                <option value="google">Gemini</option>
-                <option value="deepseek">DeepSeek (OpenAI compatible)</option>
-                <option value="aliyun">Aliyun DashScope</option>
-                <option value="openai-compatible">OpenAI-compatible (custom)</option>
-                <option value="vllm">vLLM (local)</option>
-                <option value="ollama">Ollama (local)</option>
-              </select>
-            </div>
 
+            {/* ── Execution Mode segment control ── */}
             <div className="config-group">
-              <label className="config-label" htmlFor="llm-model">
-                LLM Model
-              </label>
-              <div className="model-row">
-                <select
-                  id="llm-model-presets"
-                  value={MODEL_PRESETS[llmProvider]?.includes(llmModel) ? llmModel : 'custom'}
-                  onChange={(e) => {
-                    const val = e.target.value
-                    if (val === 'custom') return
-                    setLlmModel(val)
-                  }}
-                >
-                  {(MODEL_PRESETS[llmProvider] || []).map((m) => (
-                    <option key={m} value={m}>
-                      {m}
-                    </option>
-                  ))}
-                  <option value="custom">Custom…</option>
-                </select>
-                <input
-                  id="llm-model"
-                  type="text"
-                  value={llmModel}
-                  onChange={handleLlmModelChange}
-                  placeholder="e.g., gpt-4o-mini / qwen3.5-flash / deepseek-v3.2 / glm-4.6 / Moonshot-Kimi-K2-Instruct / qwen3-vl-32b-thinking"
-                />
+              <label className="config-label">Execution Mode</label>
+              <div className="exec-mode-seg">
+                {(['api', 'ollama', 'openclaw'] as ExecutionMode[]).map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    className={`exec-mode-seg__btn ${executionMode === m ? 'exec-mode-seg__btn--active' : ''}`}
+                    onClick={() => handleExecutionModeChange(m)}
+                  >
+                    {m === 'api' ? 'API' : m === 'ollama' ? 'Ollama' : 'OpenClaw'}
+                  </button>
+                ))}
               </div>
             </div>
 
-            {(llmProvider === 'deepseek' ||
-              llmProvider === 'aliyun' ||
-              llmProvider === 'openai-compatible' ||
-              llmProvider === 'vllm' ||
-              llmProvider === 'ollama') && (
+            {/* ── API mode: cloud provider config ── */}
+            {executionMode === 'api' && (
+              <>
                 <div className="config-group">
-                  <label className="config-label" htmlFor="llm-baseurl">
-                    Base URL
+                  <label className="config-label" htmlFor="ai-model">
+                    LLM Provider
+                  </label>
+                  <select id="ai-model" value={llmProvider} onChange={handleLlmProviderChange}>
+                    <option value="openai">OpenAI</option>
+                    <option value="anthropic">Anthropic</option>
+                    <option value="google">Gemini</option>
+                    <option value="deepseek">DeepSeek (OpenAI compatible)</option>
+                    <option value="dashscope">DashScope</option>
+                    <option value="openai-compatible">OpenAI-compatible (custom)</option>
+                    <option value="vllm">vLLM (local)</option>
+                  </select>
+                </div>
+
+                <div className="config-group">
+                  <label className="config-label" htmlFor="llm-model">
+                    LLM Model
+                  </label>
+                  <div className="model-row">
+                    <select
+                      id="llm-model-presets"
+                      value={MODEL_PRESETS[llmProvider]?.includes(llmModel) ? llmModel : 'custom'}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (val === 'custom') return
+                        setLlmModel(val)
+                      }}
+                    >
+                      {(MODEL_PRESETS[llmProvider] || []).map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                      <option value="custom">Custom…</option>
+                    </select>
+                    <input
+                      id="llm-model"
+                      type="text"
+                      value={llmModel}
+                      onChange={handleLlmModelChange}
+                      placeholder="e.g., gpt-4o-mini"
+                    />
+                  </div>
+                </div>
+
+                {(llmProvider === 'deepseek' ||
+                  llmProvider === 'dashscope' ||
+                  llmProvider === 'openai-compatible' ||
+                  llmProvider === 'vllm') && (
+                  <div className="config-group">
+                    <label className="config-label" htmlFor="llm-baseurl">
+                      Base URL
+                    </label>
+                    <input
+                      id="llm-baseurl"
+                      type="text"
+                      value={llmBaseUrl}
+                      onChange={handleLlmBaseUrlChange}
+                      placeholder="https://api.deepseek.com"
+                    />
+                  </div>
+                )}
+              </>
+            )}
+
+            {/* ── Ollama mode: local model config ── */}
+            {executionMode === 'ollama' && (
+              <>
+                <div className="config-group">
+                  <label className="config-label" htmlFor="ollama-model">
+                    Ollama Model
+                  </label>
+                  <div className="model-row">
+                    <select
+                      id="ollama-model-presets"
+                      value={ollamaModelOptions.includes(llmModel) ? llmModel : 'custom'}
+                      onChange={(e) => {
+                        const val = e.target.value
+                        if (val === 'custom') return
+                        setLlmModel(val)
+                      }}
+                    >
+                      {ollamaModelOptions.map((m) => (
+                        <option key={m} value={m}>{m}</option>
+                      ))}
+                      <option value="custom">Custom…</option>
+                    </select>
+                    <input
+                      id="ollama-model"
+                      type="text"
+                      value={llmModel}
+                      onChange={handleLlmModelChange}
+                      placeholder="e.g., gemma3:1b"
+                    />
+                  </div>
+                </div>
+
+                <div className="config-group">
+                  <label className="config-label" htmlFor="ollama-host">
+                    Ollama Host
                   </label>
                   <input
-                    id="llm-baseurl"
+                    id="ollama-host"
                     type="text"
                     value={llmBaseUrl}
                     onChange={handleLlmBaseUrlChange}
-                    placeholder="https://api.deepseek.com"
+                    placeholder="http://localhost:11434"
                   />
                 </div>
-              )}
 
-            <div className="config-group">
-              <label className="config-label" htmlFor="execution-mode">
-                Execution Mode
-              </label>
-              <select
-                id="execution-mode"
-                value={executionMode}
-                onChange={(e) => setExecutionMode(e.target.value as 'default' | 'openclaw')}
-              >
-                <option value="default">Default</option>
-                <option value="openclaw">OpenClaw</option>
-              </select>
-            </div>
+                <div className="config-group">
+                  <div className="config-label-row">
+                    <span>Detected Models</span>
+                    <button
+                      type="button"
+                      className="inline-action-btn"
+                      onClick={() => detectOllamaModels(true)}
+                      disabled={ollamaModelsLoading}
+                    >
+                      {ollamaModelsLoading ? 'Checking…' : 'Refresh list'}
+                    </button>
+                  </div>
+                  <div className="config-note config-note--tight">
+                    {ollamaModelsError
+                      ? ollamaModelsError
+                      : ollamaModels.length > 0
+                        ? `Detected ${ollamaModels.length} local models from ${ollamaLoadedHostRef.current ?? llmBaseUrl}`
+                        : 'No detected models yet. Check that the Ollama host is reachable.'}
+                  </div>
+                </div>
+              </>
+            )}
 
+            {/* ── OpenClaw mode: gateway status + role bindings ── */}
+            {executionMode === 'openclaw' && (
+              <div className="config-group">
+                <div className="oc-status-row">
+                  <span className={`oc-status-dot oc-status-dot--${openclawStatus}`} />
+                  <span className="config-label" style={{ margin: 0 }}>
+                    {openclawStatus === 'connected'
+                      ? 'Gateway Connected'
+                      : openclawStatus === 'connecting'
+                        ? 'Connecting…'
+                        : 'Gateway Disconnected'}
+                  </span>
+                </div>
+
+                <div className="oc-role-list">
+                  {REQUIRED_ROLES.map(({ id, label }) => {
+                    const agentId = openclawBindings[id]
+                    return (
+                      <div key={id} className="oc-role-row">
+                        <span className="oc-role-label">{label}</span>
+                        <span className={`oc-role-badge ${agentId ? 'oc-role-badge--bound' : 'oc-role-badge--unbound'}`}>
+                          {agentId || 'Unbound'}
+                        </span>
+                      </div>
+                    )
+                  })}
+                </div>
+
+                <button
+                  type="button"
+                  className="action-btn outline"
+                  style={{ width: '100%' }}
+                  onClick={() => setActiveTab('openclaw')}
+                >
+                  Configure OpenClaw →
+                </button>
+              </div>
+            )}
+
+            {/* ── Risk Tolerance (always visible) ── */}
             <div className="config-group">
               <div className="config-label-row">
                 <span>Risk Tolerance</span>
@@ -633,42 +950,36 @@ function App() {
               </div>
             </div>
 
-
-
             <div className="config-note">
-              Executing in <strong>{executionMode}</strong> mode with <strong>{riskTone}</strong> risk, using <strong>{llmProvider}</strong> / <strong>{llmModel}</strong>.
+              {executionMode === 'openclaw'
+                ? <>OpenClaw mode · <strong>{Object.values(openclawBindings).filter(Boolean).length}/4</strong> roles bound · <strong>{riskTone}</strong> risk</>
+                : executionMode === 'ollama'
+                  ? <>Ollama · <strong>{llmModel}</strong> · <strong>{riskTone}</strong> risk</>
+                  : <>API · <strong>{llmProvider}</strong> / <strong>{llmModel}</strong> · <strong>{riskTone}</strong> risk</>
+              }
             </div>
 
             <div className="config-actions">
-              <button type="button" className="action-btn outline">
+              <button type="button" className="action-btn outline" onClick={saveAnalysisDraft}>
                 Save Draft
               </button>
-              <button type="button" className="action-btn primary">
-                Deploy Strategy
+              <button type="button" className="action-btn primary" onClick={() => setShowProfile(true)}>
+                Profile & API Keys
               </button>
             </div>
+            {draftMessage && <div className="config-note config-note--tight">{draftMessage}</div>}
           </div>
           )}
         </section>
 
-        <div className={`panel-splitter panel-splitter--left ${draggingPanel === 'config' ? 'panel-splitter--active' : ''}`}>
-          <button
-            type="button"
-            className="panel-splitter__toggle"
-            onClick={(e) => {
-              if (isDraggingRef.current) {
-                e.preventDefault()
-                return
-              }
-              togglePanelCollapse('config')
-            }}
-            onMouseDown={(e) => handleSplitterMouseDown(e, 'config')}
-            aria-label={isConfigCollapsed ? 'Expand configuration sidebar' : 'Collapse configuration sidebar'}
-            title={isConfigCollapsed ? 'Expand configuration sidebar' : 'Collapse configuration sidebar'}
-          >
-            {isConfigCollapsed ? '▸' : '◂'}
-          </button>
-        </div>
+        <div
+          className={`panel-splitter panel-splitter--left ${draggingPanel === 'config' ? 'panel-splitter--active' : ''}`}
+          onMouseDown={(e) => handleSplitterMouseDown(e, 'config')}
+          onDoubleClick={() => togglePanelCollapse('config')}
+          aria-label={isConfigCollapsed ? 'Expand configuration sidebar' : 'Collapse configuration sidebar'}
+          title="Drag to resize · Double-click to collapse"
+          role="separator"
+        />
 
         <section className="panel ai-panel">
           <div className="panel-heading">
@@ -694,7 +1005,7 @@ function App() {
               llmProvider={llmProvider}
               llmModel={llmModel}
               llmBaseUrl={llmBaseUrl}
-              executionMode={executionMode}
+              executionMode={executionMode === 'openclaw' ? 'openclaw' : 'default'}
             />
           </div>
         </section>
@@ -730,18 +1041,49 @@ function App() {
         </header>
 
         <form className="auth-form" onSubmit={handleSubmit}>
-          <label className="field-label" htmlFor="username">
-            Username
-          </label>
-          <input
-            id="username"
-            name="username"
-            type="text"
-            placeholder="Enter your username"
-            value={form.username}
-            onChange={handleInputChange}
-            autoComplete="username"
-          />
+          {mode === 'login' ? (
+            <>
+              <label className="field-label" htmlFor="identifier">
+                Email or Username
+              </label>
+              <input
+                id="identifier"
+                name="identifier"
+                type="text"
+                placeholder="Enter your email or username"
+                value={form.identifier}
+                onChange={handleInputChange}
+                autoComplete="username"
+              />
+            </>
+          ) : (
+            <>
+              <label className="field-label" htmlFor="email">
+                Email
+              </label>
+              <input
+                id="email"
+                name="email"
+                type="email"
+                placeholder="you@example.com"
+                value={form.email}
+                onChange={handleInputChange}
+                autoComplete="email"
+              />
+              <label className="field-label" htmlFor="displayName">
+                Display Name <span className="field-label-optional">(optional)</span>
+              </label>
+              <input
+                id="displayName"
+                name="displayName"
+                type="text"
+                placeholder="How you appear to others"
+                value={form.displayName}
+                onChange={handleInputChange}
+                autoComplete="name"
+              />
+            </>
+          )}
 
           <label className="field-label" htmlFor="password">
             Password

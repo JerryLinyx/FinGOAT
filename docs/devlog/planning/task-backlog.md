@@ -52,8 +52,8 @@
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
 - [ ] Add user API key configuration page and secure backend contracts (provider-scoped key write/update without plaintext echo)
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
-- [ ] Add chart query history panel (deduplicated symbol list, re-query pins symbol to top by recency)
-  - Record: `records/2026-03-13-chart-query-history-requirements.md`
+- [x] Add chart query history panel (deduplicated symbol list, re-query pins symbol to top by recency)
+  - Record: `records/2026-03-14-chart-feature-and-tactile-ui-implementation.md`
 - [ ] Add TradingAgents duplicate-run guard in dashboard: prompt confirmation when same user re-runs same symbol on same analysis date
   - Record: `records/2026-03-13-trading-analysis-duplicate-guard-requirements.md`
 - [ ] Remove stale frontend dev proxy path `/trading -> :8001` if frontend no longer calls Python APIs directly
@@ -84,14 +84,28 @@
   - Record: `records/2026-03-13-analysis-cancel-and-resume.md`
 - [x] Promote stage-centric task responses (`stages`) to the primary frontend consumption model while keeping `analysis_report` transitional
   - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
-- [ ] Define configuration precedence rules across Go, Python, and Docker
-- [ ] Refactor frontend state boundaries for auth, article feed, and analysis
-- [ ] Resolve OpenClaw runtime health/dependency contract so local available setups no longer report misleading degraded status
+- [x] Define configuration precedence rules across Go, Python, and Docker
+- [x] Test backend endpoint with running service
+- [x] Test frontend chart rendering in browser
+
+## UI Refinements
+- [x] Match Dashboard sidebar width to OpenClaw (min 280px, max 360px)
+- [x] Replace pill-button splitter with 6px border drag strip
+- [x] Halve panel gaps in resizable layout (0.9rem -> 0.45rem)
+- [x] Add chart query history (localStorage + chips)
+- [x] Refactor frontend state boundaries for auth, article feed, and analysis
+- [x] Resolve OpenClaw runtime health/dependency contract so local available setups no longer report misleading degraded status
   - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
-- [ ] Add a background scheduler for feed ingest (cron/worker) so feed freshness does not depend on manual refresh
+- [x] Add a background scheduler for feed ingest (cron/worker) so feed freshness does not depend on manual refresh
   - Record: `records/2026-03-13-rss-refresh-deduplication.md`
-- [ ] Connect OpenClaw Chat role binding with trading workflow execution config instead of keeping chat as isolated local MVP
+- [x] Connect OpenClaw Chat role binding with trading workflow execution config instead of keeping chat as isolated local MVP
   - Record: `records/2026-03-13-openclaw-analyst-runtime-integration.md`
+- [x] Add live token-level SSE streaming from LangGraph `astream_events` through Redis Streams, FastAPI `EventSourceResponse`, Go proxy, to frontend `EventSource` with `ReactMarkdown` rendering
+  - Record: `records/2026-03-14-sse-streaming-flow-graph-compact-ui.md`
+- [x] Add Agent Flow Graph tab in `AgentResultsModule` showing SVG DAG of the 9-stage pipeline with live node status coloring and edge animations
+  - Record: `records/2026-03-14-sse-streaming-flow-graph-compact-ui.md`
+- [x] Replace `processing-indicator` block with compact single-row `processing-bar`; compress `decision-card` to single-row flex layout
+  - Record: `records/2026-03-14-sse-streaming-flow-graph-compact-ui.md`
 
 ## P2
 

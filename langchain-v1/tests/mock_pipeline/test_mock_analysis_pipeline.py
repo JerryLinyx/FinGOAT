@@ -180,7 +180,7 @@ class MockAnalysisPipelineTest(unittest.TestCase):
                 "ticker": "NVDA",
                 "date": "2024-05-10",
                 "llm_config": {
-                    "provider": "aliyun",
+                    "provider": "dashscope",
                     "deep_think_llm": "qwen3.5-flash",
                     "quick_think_llm": "qwen3.5-flash"
                 }
@@ -208,7 +208,7 @@ class MockAnalysisPipelineTest(unittest.TestCase):
         self.assertTrue(body["stages"])
         self.assertEqual(body["stages"][0]["stage_id"], "market")
         self.assertEqual(body["analysis_report"]["messages"][0]["type"], "human")
-        self.assertEqual(body["analysis_report"]["raw_state"]["raw_trace"]["provider"], "aliyun")
+        self.assertEqual(body["analysis_report"]["raw_state"]["raw_trace"]["provider"], "dashscope")
         self.assertIsNone(body["error"])
 
     def test_extract_analysis_report_includes_stage_metadata(self):
@@ -256,7 +256,7 @@ class MockAnalysisPipelineTest(unittest.TestCase):
             "ticker": "NVDA",
             "date": "2024-05-10",
             "llm_config": {
-                "provider": "aliyun",
+                "provider": "dashscope",
                 "deep_think_llm": "qwen3.5-flash",
                 "quick_think_llm": "qwen3.5-flash",
             },

@@ -5,6 +5,7 @@ This service exposes health/config endpoints and runs a Redis-backed worker for
 multi-agent trading analysis tasks.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -20,11 +21,12 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, status
+from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, validator
 from redis import Redis
 from redis.exceptions import RedisError
+from sse_starlette.sse import EventSourceResponse
 
 from json_safety import make_json_safe
 
@@ -63,6 +65,8 @@ app.add_middleware(
 
 
 RUNTIME_KEY_PREFIX = "trading:analysis:runtime:"
+STREAM_KEY_PREFIX = "trading:stream"
+STREAM_TTL_SECONDS = 3600
 QUEUE_KEY = "trading:analysis:queue"
 PROCESSING_QUEUE_KEY = "trading:analysis:processing"
 RECENT_TASKS_KEY = "trading:analysis:recent"
@@ -105,6 +109,15 @@ class LLMConfig(BaseModel):
     provider: str = Field(default="ollama", description="LLM provider identifier")
     base_url: Optional[str] = Field(default=None, description="Override LLM base URL")
     api_key: Optional[str] = Field(default=None, description="Optional override for provider API key")
+
+    @validator("provider")
+    def normalize_provider(cls, value: str) -> str:
+        if not value:
+            return "ollama"
+        normalized = value.lower()
+        if normalized == "aliyun":
+            return "dashscope"
+        return normalized
 
 
 class DataVendorConfig(BaseModel):
@@ -839,6 +852,141 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
         save_task_state(task_state)
 
 
+async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) -> None:
+    """Async core of run_streaming_analysis: calls propagate_streaming and pushes events to Redis Stream."""
+    task_state = load_task_state(task_id) or create_task_state(
+        task_id, request.ticker, request.date, request.execution_mode
+    )
+    stream_key = f"{STREAM_KEY_PREFIX}:{task_id}"
+    client = get_redis_client()
+
+    if task_state.get("status") == TaskStatus.CANCELLED.value:
+        logger.info("Skipping cancelled streaming task %s before start", task_id)
+        return
+
+    task_state["status"] = TaskStatus.PROCESSING.value
+    task_state["cancel_requested"] = False
+    task_state["execution_mode"] = request.execution_mode.value
+    save_task_state(task_state)
+
+    start_time = datetime.now(timezone.utc)
+
+    async def token_cb(stage_id: str, node: str, token: str) -> None:
+        try:
+            client.xadd(
+                stream_key,
+                {"type": "token", "stage_id": stage_id, "node": node, "t": token},
+                maxlen=200_000,
+            )
+        except Exception as exc:
+            logger.warning("xadd token failed: %s", exc)
+
+    async def stage_end_cb(stage_id: str, state_snapshot: Dict[str, Any]) -> None:
+        try:
+            # Check cancellation
+            latest = load_task_state(task_id)
+            if latest and latest.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledError("analysis cancelled by user")
+
+            update_processing_checkpoint(task_state, state_snapshot, start_time, request.execution_mode.value)
+            # find the stage data we just updated
+            stage_rows = task_state.get("stages", [])
+            stage_data = next((s for s in stage_rows if s.get("stage_id") == stage_id), {})
+            client.xadd(
+                stream_key,
+                {"type": "stage_end", "stage_id": stage_id, "data": json.dumps(stage_data, default=str)},
+                maxlen=200_000,
+            )
+        except TaskCancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("stage_end_cb failed for %s: %s", stage_id, exc)
+
+    try:
+        config = build_config(request)
+        trading_graph = TradingAgentsGraph(debug=False, config=config)
+        final_state = await trading_graph.propagate_streaming(
+            request.ticker,
+            request.date,
+            token_callback=token_cb,
+            stage_end_callback=stage_end_cb,
+        )
+
+        # check cancellation one last time
+        latest = load_task_state(task_id)
+        if latest and latest.get("status") == TaskStatus.CANCELLED.value:
+            raise TaskCancelledError("analysis cancelled by user")
+
+        end_time = datetime.now(timezone.utc)
+        processing_time = (end_time - start_time).total_seconds()
+
+        decision = trading_graph.process_signal(final_state.get("final_trade_decision", "HOLD"))
+        trading_decision = extract_decision_info(decision)
+        analysis_report = extract_analysis_report(
+            final_state,
+            processing_time,
+            task_status=TaskStatus.COMPLETED.value,
+            execution_mode=request.execution_mode.value,
+        )
+
+        task_state.update({
+            "status": TaskStatus.COMPLETED.value,
+            "execution_mode": request.execution_mode.value,
+            "decision": model_dump_compat(trading_decision),
+            "stages": analysis_report.get("__stages", []),
+            "analysis_report": analysis_report,
+            "completed_at": end_time.isoformat(),
+            "processing_time_seconds": processing_time,
+            "error": None,
+        })
+        save_task_state(task_state)
+
+        client.xadd(stream_key, {"type": "task_complete", "status": "completed"})
+        logger.info("Streaming analysis completed for task %s in %.2fs", task_id, processing_time)
+
+    except TaskCancelledError as exc:
+        logger.info("Streaming task %s cancelled: %s", task_id, exc)
+        latest = load_task_state(task_id) or task_state
+        latest.update({
+            "status": TaskStatus.CANCELLED.value,
+            "cancel_requested": True,
+            "execution_mode": request.execution_mode.value,
+            "error": str(exc),
+            "completed_at": utcnow_iso(),
+        })
+        save_task_state(latest)
+        try:
+            client.xadd(stream_key, {"type": "task_error", "error": str(exc)})
+        except Exception:
+            pass
+
+    except Exception as exc:
+        logger.error("Streaming analysis task %s failed: %s", task_id, exc, exc_info=True)
+        task_state.update({
+            "status": TaskStatus.FAILED.value,
+            "execution_mode": request.execution_mode.value,
+            "stages": task_state.get("stages", []),
+            "error": str(exc),
+            "completed_at": utcnow_iso(),
+        })
+        save_task_state(task_state)
+        try:
+            client.xadd(stream_key, {"type": "task_error", "error": str(exc)})
+        except Exception:
+            pass
+
+    finally:
+        try:
+            client.expire(stream_key, STREAM_TTL_SECONDS)
+        except Exception:
+            pass
+
+
+def run_streaming_analysis(task_id: str, request: AnalysisRequest) -> None:
+    """Synchronous wrapper for the streaming analysis — called from the worker thread."""
+    asyncio.run(_run_streaming_analysis_async(task_id, request))
+
+
 def process_analysis_payload(payload: str) -> None:
     request_payload = json.loads(payload)
     request = AnalysisRequest(**request_payload)
@@ -850,7 +998,7 @@ def process_analysis_payload(payload: str) -> None:
         logger.info("Skipping queued payload for cancelled task %s", request.task_id)
         return
 
-    run_analysis(request.task_id, request)
+    run_streaming_analysis(request.task_id, request)
 
 
 def recover_processing_queue() -> None:
@@ -1015,6 +1163,61 @@ async def get_analysis_result(task_id: str) -> AnalysisResponse:
         )
 
     return AnalysisResponse(**task_state)
+
+
+@app.get("/api/v1/analysis/{task_id}/stream")
+async def stream_analysis_events(task_id: str, request: Request):  # type: ignore[override]
+    """SSE endpoint that streams token events and stage completions for a task."""
+    stream_key = f"{STREAM_KEY_PREFIX}:{task_id}"
+    loop = asyncio.get_event_loop()
+    client = get_redis_client()
+
+    async def event_gen():
+        task_state = load_task_state(task_id)
+        if not task_state:
+            yield {"data": json.dumps({"type": "error", "error": f"task {task_id} not found"})}
+            return
+
+        # Always start from the beginning of the stream so nothing is missed
+        last_id = "0"
+
+        while True:
+            if await request.is_disconnected():
+                break
+
+            current_last_id = last_id  # capture for thread-safe lambda
+
+            try:
+                results = await loop.run_in_executor(
+                    None,
+                    lambda lid=current_last_id: client.xread(
+                        {stream_key: lid}, count=200, block=500
+                    ),
+                )
+            except Exception as exc:
+                logger.warning("xread error for task %s: %s", task_id, exc)
+                await asyncio.sleep(0.5)
+                continue
+
+            if results:
+                for _, entries in results:
+                    for entry_id, fields in entries:
+                        last_id = entry_id
+                        yield {"data": json.dumps(fields)}
+                        if fields.get("type") in ("task_complete", "task_error"):
+                            return
+            else:
+                # No new stream messages — check if task already finished before stream was created
+                ts = load_task_state(task_id)
+                if ts and ts["status"] in (
+                    TaskStatus.COMPLETED.value,
+                    TaskStatus.FAILED.value,
+                    TaskStatus.CANCELLED.value,
+                ):
+                    yield {"data": json.dumps({"type": "task_complete", "status": ts["status"]})}
+                    return
+
+    return EventSourceResponse(event_gen())
 
 
 @app.get("/api/v1/tasks")

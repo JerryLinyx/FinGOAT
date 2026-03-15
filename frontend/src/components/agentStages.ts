@@ -16,6 +16,7 @@ export type StageStatus = 'pending' | 'processing' | 'completed' | 'failed' | 'c
 export type AgentStage = {
   key: AgentStageKey
   label: string
+  icon: string
 }
 
 export type StageProgress = AgentStage & {
@@ -32,15 +33,15 @@ export type StageProgress = AgentStage & {
 }
 
 export const AGENT_STAGES: AgentStage[] = [
-  { key: 'market', label: 'Technical' },
-  { key: 'social', label: 'Social Media' },
-  { key: 'news', label: 'News' },
-  { key: 'fundamentals', label: 'Fundamentals' },
-  { key: 'research_debate', label: 'Research Debate' },
-  { key: 'portfolio_manager', label: 'Portfolio Manager' },
-  { key: 'trader_plan', label: 'Trader Plan' },
-  { key: 'risk_debate', label: 'Risk Debate' },
-  { key: 'risk_management', label: 'Risk Management' },
+  { key: 'market',            label: 'Technical',         icon: '📈' },
+  { key: 'social',            label: 'Social Media',      icon: '📱' },
+  { key: 'news',              label: 'News',              icon: '📰' },
+  { key: 'fundamentals',      label: 'Fundamentals',      icon: '💹' },
+  { key: 'research_debate',   label: 'Research Debate',   icon: '🔬' },
+  { key: 'portfolio_manager', label: 'Portfolio Manager', icon: '💼' },
+  { key: 'trader_plan',       label: 'Trader Plan',       icon: '📋' },
+  { key: 'risk_debate',       label: 'Risk Debate',       icon: '⚖️' },
+  { key: 'risk_management',   label: 'Risk Management',   icon: '🛡️' },
 ]
 
 const LEGACY_REPORT_KEY_BY_STAGE: Record<AgentStageKey, string> = {

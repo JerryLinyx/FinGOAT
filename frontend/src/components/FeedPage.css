@@ -173,6 +173,15 @@
 
 .feed-btn.active {
   color: #ff4757;
+  animation: heart-jelly 0.45s cubic-bezier(0.175, 0.885, 0.32, 1.275) both;
+}
+
+@keyframes heart-jelly {
+  0% { transform: scale(1); }
+  25% { transform: scale(1.2) rotate(-10deg); }
+  50% { transform: scale(0.9) rotate(5deg); }
+  75% { transform: scale(1.1) rotate(-3deg); }
+  100% { transform: scale(1) rotate(0); }
 }
 
 .feed-status {

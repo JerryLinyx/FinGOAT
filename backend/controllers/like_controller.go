@@ -13,11 +13,12 @@ func LikeArticle(c *gin.Context) {
 
 	likeKey := "article:" + articleID + ":likes"
 
-	if err := global.RedisDB.Incr(c, likeKey).Err(); err != nil {
+	newCount, err := global.RedisDB.Incr(c, likeKey).Result()
+	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "Article liked successfully"})
+	c.JSON(http.StatusOK, gin.H{"likes": newCount})
 }
 
 func GetArticleLikes(c *gin.Context) {
@@ -25,13 +26,13 @@ func GetArticleLikes(c *gin.Context) {
 
 	likeKey := "article:" + articleID + ":likes"
 
-	likes, err := global.RedisDB.Get(c, likeKey).Result()
+	count, err := global.RedisDB.Get(c, likeKey).Int64()
 	if err == redis.Nil {
-		likes = "0"
+		count = 0
 	} else if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"likes": likes})
+	c.JSON(http.StatusOK, gin.H{"likes": count})
 }

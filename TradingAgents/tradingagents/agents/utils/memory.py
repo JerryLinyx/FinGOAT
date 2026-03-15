@@ -9,6 +9,18 @@ OLLAMA_COMPAT_BASE_URL = "http://localhost:11434/v1"
 MIN_EMBED_RETRY_LENGTH = 256
 logger = logging.getLogger(__name__)
 
+try:
+    from langchain_community.embeddings import DashScopeEmbeddings
+except Exception:  # pragma: no cover - optional dependency
+    DashScopeEmbeddings = None
+
+
+def normalize_provider_name(provider: str | None) -> str:
+    normalized = (provider or "openai").lower()
+    if normalized == "aliyun":
+        return "dashscope"
+    return normalized
+
 
 def _ollama_embed_base_url(base_url: str | None) -> str:
     if not base_url:
@@ -20,7 +32,7 @@ def _ollama_embed_base_url(base_url: str | None) -> str:
 
 
 def _resolve_embedding_settings(config):
-    provider = str((config or {}).get("llm_provider", os.getenv("LLM_PROVIDER", "openai"))).lower()
+    provider = normalize_provider_name((config or {}).get("llm_provider", os.getenv("LLM_PROVIDER", "openai")))
     provider_base_url = (config or {}).get("backend_url") or os.getenv("LLM_BASE_URL")
     provider_api_key = (config or {}).get("llm_api_key") or os.getenv("LLM_API_KEY", "")
 
@@ -28,11 +40,11 @@ def _resolve_embedding_settings(config):
     embed_base_url = os.getenv("EMBED_BASE_URL")
     embed_api_key = os.getenv("EMBED_API_KEY")
 
-    if provider == "aliyun":
+    if provider == "dashscope":
         return (
-            embed_model or "text-embedding-v4",
-            embed_base_url or provider_base_url or DASHSCOPE_COMPAT_BASE_URL,
-            embed_api_key or os.getenv("DASHSCOPE_API_KEY", "") or provider_api_key,
+            os.getenv("DASHSCOPE_EMBED_MODEL", "") or "text-embedding-v4",
+            os.getenv("DASHSCOPE_EMBED_BASE_URL", "") or provider_base_url or DASHSCOPE_COMPAT_BASE_URL,
+            os.getenv("DASHSCOPE_EMBED_API_KEY", "") or os.getenv("DASHSCOPE_API_KEY", "") or provider_api_key,
         )
 
     if provider == "ollama":
@@ -54,10 +66,11 @@ class FinancialSituationMemory:
         # Let embeddings follow the selected provider unless explicitly overridden.
         embed_model, embed_base_url, embed_api_key = _resolve_embedding_settings(config)
 
-        self.provider = str((config or {}).get("llm_provider", os.getenv("LLM_PROVIDER", "openai"))).lower()
+        self.provider = normalize_provider_name((config or {}).get("llm_provider", os.getenv("LLM_PROVIDER", "openai")))
         self.embedding = embed_model
         self.embed_base_url = embed_base_url
         self.client = OpenAI(base_url=embed_base_url, api_key=embed_api_key)
+        self.native_embedding = self._build_native_embedding_client(embed_model, embed_api_key)
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         # Avoid collision when collection already exists (reuse instead of failing)
         try:
@@ -65,8 +78,32 @@ class FinancialSituationMemory:
         except Exception:
             self.situation_collection = self.chroma_client.get_or_create_collection(name=name)
 
+    def _build_native_embedding_client(self, embed_model: str, embed_api_key: str):
+        if self.provider != "dashscope" or DashScopeEmbeddings is None:
+            return None
+        try:
+            return DashScopeEmbeddings(
+                model=embed_model,
+                dashscope_api_key=embed_api_key,
+            )
+        except Exception as exc:
+            logger.warning(
+                "DashScopeEmbeddings unavailable, falling back to OpenAI-compatible embeddings: %s",
+                exc,
+            )
+            return None
+
     def get_embedding(self, text):
         """Get an embedding, shrinking oversized inputs only when the provider rejects them."""
+
+        if self.native_embedding is not None:
+            try:
+                return self.native_embedding.embed_query(text)
+            except Exception as exc:
+                if not self._should_retry_with_shorter_input(exc, text):
+                    raise
+                text = text[: max(len(text) // 2, MIN_EMBED_RETRY_LENGTH)]
+                return self.native_embedding.embed_query(text)
 
         text_to_embed = text
         while True:
@@ -92,7 +129,7 @@ class FinancialSituationMemory:
             return True
         if "maximum context length" in message.lower():
             return True
-        if self.provider == "aliyun" and "InvalidParameter" in message and "input length" in message:
+        if self.provider == "dashscope" and "InvalidParameter" in message and "input length" in message:
             return True
         return False
 
