@@ -29,6 +29,17 @@ func normalizeAPIKeyProvider(provider string) string {
 	return normalized
 }
 
+// lookupDecryptedKey fetches and decrypts the stored API key for the given
+// user and provider. Returns ("", nil) if no key is stored.
+func lookupDecryptedKey(userID uint, provider string) (string, error) {
+	var rec models.UserAPIKey
+	err := global.DB.Where("user_id = ? AND provider = ?", userID, provider).First(&rec).Error
+	if err != nil {
+		return "", nil // not found = no key set
+	}
+	return utils.DecryptAPIKey(rec.EncryptedKey)
+}
+
 // ─── Profile ──────────────────────────────────────────────────────────────────
 
 // GetProfile returns the authenticated user's public profile.
@@ -150,7 +161,7 @@ func GetAPIKeys(c *gin.Context) {
 	}
 
 	// Return a fixed ordered list covering all supported providers.
-	providers := []string{"openai", "anthropic", "google", "deepseek", "dashscope"}
+	providers := []string{"openai", "anthropic", "google", "deepseek", "dashscope", "alpha_vantage"}
 	result := make([]APIKeyListEntry, 0, len(providers))
 	for _, p := range providers {
 		if entry, exists := setMap[p]; exists {

@@ -13,7 +13,7 @@ DEFAULT_CONFIG = {
     "deep_think_llm": os.getenv("LLM_DEEP_MODEL", "gemma3:1b"),
     "quick_think_llm": os.getenv("LLM_QUICK_MODEL", "gemma3:1b"),
     "backend_url": os.getenv("LLM_BASE_URL", "http://localhost:11434"),
-    "llm_timeout": int(os.getenv("LLM_TIMEOUT", "60")),
+    "llm_timeout": int(os.getenv("LLM_TIMEOUT", "300")),
     "llm_temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "llm_api_key": os.getenv("LLM_API_KEY"),  # optional override; otherwise provider-specific envs are used
     "execution_mode": os.getenv("TRADING_EXECUTION_MODE", "default"),

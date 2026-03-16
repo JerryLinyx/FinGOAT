@@ -204,6 +204,22 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         setLoading(true)
         applyTaskState(null)
 
+        // Duplicate-run guard
+        const duplicate = previousAnalyses.find(
+            t => t.ticker.toUpperCase() === ticker.toUpperCase() &&
+                 t.analysis_date === date &&
+                 (t.status === 'completed' || t.status === 'processing' || t.status === 'pending')
+        )
+        if (duplicate) {
+            const ok = window.confirm(
+                `You already have a ${duplicate.status} analysis for ${ticker.toUpperCase()} on ${date}.\n\nCreate a new analysis anyway?`
+            )
+            if (!ok) {
+                setLoading(false)
+                return
+            }
+        }
+
         try {
             // Submit analysis request
             const llmConfig = {

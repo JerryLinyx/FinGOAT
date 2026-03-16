@@ -100,7 +100,31 @@ func RequestAnalysis(c *gin.Context) {
 			llmModel = req.LLMConfig.DeepThinkLLM
 		}
 		llmBaseURL = req.LLMConfig.BaseURL
+
+		// Inject the user's stored API key for non-local providers.
+		if llmProvider != "" && llmProvider != "ollama" {
+			key, keyErr := lookupDecryptedKey(userID.(uint), llmProvider)
+			if keyErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve API key"})
+				return
+			}
+			if key == "" {
+				c.JSON(http.StatusBadRequest, gin.H{
+					"error": fmt.Sprintf("no API key configured for provider %q — add it in Profile & API Keys", llmProvider),
+				})
+				return
+			}
+			req.LLMConfig.APIKey = key
+		}
 	}
+
+	// Inject Alpha Vantage key (may be empty — Python falls back to env var).
+	avKey, avErr := lookupDecryptedKey(userID.(uint), "alpha_vantage")
+	if avErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve alpha vantage key"})
+		return
+	}
+	req.AlphaVantageAPIKey = avKey
 
 	configJSON, err := marshalTaskConfig(&req)
 	if err != nil {

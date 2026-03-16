@@ -46,13 +46,14 @@ type DataVendorConfig struct {
 }
 
 type AnalysisRequest struct {
-	TaskID           string            `json:"task_id,omitempty"`
-	UserID           uint              `json:"user_id,omitempty"`
-	Ticker           string            `json:"ticker" binding:"required"`
-	Date             string            `json:"date" binding:"required"`
-	ExecutionMode    string            `json:"execution_mode,omitempty"`
-	LLMConfig        *LLMConfig        `json:"llm_config,omitempty"`
-	DataVendorConfig *DataVendorConfig `json:"data_vendor_config,omitempty"`
+	TaskID              string            `json:"task_id,omitempty"`
+	UserID              uint              `json:"user_id,omitempty"`
+	Ticker              string            `json:"ticker" binding:"required"`
+	Date                string            `json:"date" binding:"required"`
+	ExecutionMode       string            `json:"execution_mode,omitempty"`
+	LLMConfig           *LLMConfig        `json:"llm_config,omitempty"`
+	DataVendorConfig    *DataVendorConfig `json:"data_vendor_config,omitempty"`
+	AlphaVantageAPIKey  string            `json:"alpha_vantage_api_key,omitempty"`
 }
 
 type TradingDecisionPayload struct {

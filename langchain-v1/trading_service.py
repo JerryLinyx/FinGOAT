@@ -135,6 +135,7 @@ class AnalysisRequest(BaseModel):
     execution_mode: ExecutionMode = Field(default=ExecutionMode.DEFAULT, description="Execution backend mode")
     llm_config: Optional[LLMConfig] = Field(default=None, description="LLM configuration")
     data_vendor_config: Optional[DataVendorConfig] = Field(default=None, description="Data vendor configuration")
+    alpha_vantage_api_key: Optional[str] = Field(default=None, description="User's Alpha Vantage API key (injected by Go backend)")
 
     @validator("ticker")
     def validate_ticker(cls, value: str) -> str:
@@ -426,6 +427,9 @@ def build_config(request: AnalysisRequest) -> Dict[str, Any]:
             "fundamental_data": request.data_vendor_config.fundamental_data,
             "news_data": request.data_vendor_config.news_data,
         }
+
+    if request.alpha_vantage_api_key:
+        config["alpha_vantage_api_key"] = request.alpha_vantage_api_key
 
     return config
 
@@ -783,6 +787,9 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
         start_time = datetime.now(timezone.utc)
 
         config = build_config(request)
+        av_key = config.get("alpha_vantage_api_key", "")
+        if av_key:
+            os.environ["ALPHA_VANTAGE_API_KEY"] = av_key
         trading_graph = TradingAgentsGraph(debug=False, config=config)
         state, decision = trading_graph.propagate(
             request.ticker,
@@ -904,6 +911,12 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
 
     try:
         config = build_config(request)
+        # If a per-user Alpha Vantage key was injected by the Go backend, apply it
+        # to the process environment so TradingAgents dataflows can pick it up.
+        # Safe because analyses are processed sequentially by a single worker thread.
+        av_key = config.get("alpha_vantage_api_key", "")
+        if av_key:
+            os.environ["ALPHA_VANTAGE_API_KEY"] = av_key
         trading_graph = TradingAgentsGraph(debug=False, config=config)
         final_state = await trading_graph.propagate_streaming(
             request.ticker,

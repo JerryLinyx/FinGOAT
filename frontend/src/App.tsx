@@ -14,7 +14,7 @@ import { ChartPage } from './components/ChartPage'
 import { OpenClawPage } from './components/OpenClawPage'
 import { FeedPage } from './components/FeedPage'
 import { ProfilePage } from './components/ProfilePage'
-import { getProfile } from './services/userService'
+import { getProfile, getAPIKeys } from './services/userService'
 import { tradingService, type OllamaModel } from './services/tradingService'
 import type { UserProfile } from './types/user'
 
@@ -189,6 +189,7 @@ function App() {
   const [openclawBindings, setOpenclawBindings] = useState<RoleBindings>(readOpenClawBindings)
   const [riskTolerance, setRiskTolerance] = useState(1)
   const [draftMessage, setDraftMessage] = useState('')
+  const [configuredProviders, setConfiguredProviders] = useState<Set<string>>(new Set())
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState('')
@@ -242,6 +243,10 @@ function App() {
       // Restore user profile state on page reload
       getProfile()
         .then(setCurrentUser)
+        .catch(() => { /* non-fatal */ })
+      // Load configured API providers
+      getAPIKeys()
+        .then(keys => setConfiguredProviders(new Set(keys.filter(k => k.is_set).map(k => k.provider))))
         .catch(() => { /* non-fatal */ })
     }
   }, [])
@@ -375,6 +380,10 @@ function App() {
         } catch {
           // Non-fatal: user will see username from token
         }
+        // Load configured API providers
+        getAPIKeys()
+          .then(keys => setConfiguredProviders(new Set(keys.filter(k => k.is_set).map(k => k.provider))))
+          .catch(() => { /* non-fatal */ })
         setTimeout(() => setView('home'), 400)
       } else {
         setError('The server response did not include a token.')
@@ -404,19 +413,11 @@ function App() {
   const riskTone = RISK_LABELS[riskTolerance] ?? 'Moderate'
 
   const MODEL_PRESETS: Record<string, string[]> = {
-    openai: ['gpt-4o-mini', 'gpt-4o'],
-    anthropic: ['claude-3-haiku-20240307', 'claude-3-5-sonnet-latest'],
-    google: ['gemini-1.5-flash', 'gemini-1.5-pro'],
-    deepseek: ['deepseek-chat'],
-    dashscope: [
-      'qwen3.5-flash',
-      'deepseek-v3.2',
-      'glm-4.6',
-      'Moonshot-Kimi-K2-Instruct',
-      'qwen3-vl-32b-thinking',
-    ],
-    'openai-compatible': ['gpt-4o-mini'],
-    vllm: ['gpt-4o-mini'],
+    openai: [],
+    anthropic: [],
+    google: [],
+    deepseek: [],
+    dashscope: [],
     ollama: [
       'gemma3:1b',
       'llama3.2',
@@ -452,18 +453,13 @@ function App() {
     openai: 'https://api.openai.com/v1',
     deepseek: 'https://api.deepseek.com/v1',
     dashscope: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    'openai-compatible': 'http://localhost:8009/v1',
-    vllm: 'http://localhost:8009/v1',
     ollama: 'http://localhost:11434',
   }
 
   const handleLlmProviderChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const value = normalizeProviderName(e.target.value)
     setLlmProvider(value)
-    const presets = MODEL_PRESETS[value] || []
-    if (presets.length > 0) {
-      setLlmModel(presets[0])
-    }
+    setLlmModel('')
     if (BASE_DEFAULTS[value]) {
       setLlmBaseUrl(BASE_DEFAULTS[value])
     } else {
@@ -486,9 +482,11 @@ function App() {
       setLlmModel((prev) => (MODEL_PRESETS.ollama.includes(prev) ? prev : 'gemma3:1b'))
       setLlmBaseUrl('http://localhost:11434')
     } else if (mode === 'api' && llmProvider === 'ollama') {
-      setLlmProvider('openai')
-      setLlmModel('gpt-4o-mini')
-      setLlmBaseUrl('https://api.openai.com/v1')
+      const firstConfigured = ['openai', 'anthropic', 'google', 'deepseek', 'dashscope']
+        .find(p => configuredProviders.has(p)) ?? 'openai'
+      setLlmProvider(firstConfigured)
+      setLlmModel('')
+      setLlmBaseUrl(BASE_DEFAULTS[firstConfigured] ?? '')
     }
     // openclaw: no LLM config changes needed
   }
@@ -763,13 +761,17 @@ function App() {
                     LLM Provider
                   </label>
                   <select id="ai-model" value={llmProvider} onChange={handleLlmProviderChange}>
-                    <option value="openai">OpenAI</option>
-                    <option value="anthropic">Anthropic</option>
-                    <option value="google">Gemini</option>
-                    <option value="deepseek">DeepSeek (OpenAI compatible)</option>
-                    <option value="dashscope">DashScope</option>
-                    <option value="openai-compatible">OpenAI-compatible (custom)</option>
-                    <option value="vllm">vLLM (local)</option>
+                    {([
+                      { value: 'openai', label: 'OpenAI' },
+                      { value: 'anthropic', label: 'Anthropic' },
+                      { value: 'google', label: 'Gemini' },
+                      { value: 'deepseek', label: 'DeepSeek' },
+                      { value: 'dashscope', label: 'DashScope' },
+                    ] as const).map(({ value, label }) => (
+                      <option key={value} value={value} disabled={!configuredProviders.has(value)}>
+                        {label}{!configuredProviders.has(value) ? ' (no key)' : ''}
+                      </option>
+                    ))}
                   </select>
                 </div>
 
@@ -777,35 +779,17 @@ function App() {
                   <label className="config-label" htmlFor="llm-model">
                     LLM Model
                   </label>
-                  <div className="model-row">
-                    <select
-                      id="llm-model-presets"
-                      value={MODEL_PRESETS[llmProvider]?.includes(llmModel) ? llmModel : 'custom'}
-                      onChange={(e) => {
-                        const val = e.target.value
-                        if (val === 'custom') return
-                        setLlmModel(val)
-                      }}
-                    >
-                      {(MODEL_PRESETS[llmProvider] || []).map((m) => (
-                        <option key={m} value={m}>{m}</option>
-                      ))}
-                      <option value="custom">Custom…</option>
-                    </select>
-                    <input
-                      id="llm-model"
-                      type="text"
-                      value={llmModel}
-                      onChange={handleLlmModelChange}
-                      placeholder="e.g., gpt-4o-mini"
-                    />
-                  </div>
+                  <input
+                    id="llm-model"
+                    type="text"
+                    value={llmModel}
+                    onChange={handleLlmModelChange}
+                    placeholder="e.g., gpt-4o-mini"
+                  />
                 </div>
 
                 {(llmProvider === 'deepseek' ||
-                  llmProvider === 'dashscope' ||
-                  llmProvider === 'openai-compatible' ||
-                  llmProvider === 'vllm') && (
+                  llmProvider === 'dashscope') && (
                   <div className="config-group">
                     <label className="config-label" htmlFor="llm-baseurl">
                       Base URL

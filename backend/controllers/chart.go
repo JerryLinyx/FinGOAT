@@ -38,9 +38,18 @@ func GetStockChart(c *gin.Context) {
 
 	rangeParam := c.DefaultQuery("range", "3m")
 
-	apiKey := os.Getenv("ALPHA_VANTAGE_API_KEY")
+	// Prefer the user's stored Alpha Vantage key; fall back to env var.
+	var apiKey string
+	if uid, ok := c.Get("user_id"); ok {
+		if key, err := lookupDecryptedKey(uid.(uint), "alpha_vantage"); err == nil && key != "" {
+			apiKey = key
+		}
+	}
 	if apiKey == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "ALPHA_VANTAGE_API_KEY not configured"})
+		apiKey = os.Getenv("ALPHA_VANTAGE_API_KEY")
+	}
+	if apiKey == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Alpha Vantage API key not configured — add it in Profile & API Keys"})
 		return
 	}
 

@@ -12,9 +12,10 @@ export default defineConfig({
   ],
   server: {
     proxy: {
-      // Proxy API calls to backend during local dev to keep VITE_API_URL empty/relative.
+      // All API calls go through the Go backend.
+      // The Python trading service (port 8001) is an internal worker only —
+      // never called directly from the frontend.
       '/api': 'http://localhost:3000',
-      '/trading': 'http://localhost:8001',
     },
   },
 })

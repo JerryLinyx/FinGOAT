@@ -2,46 +2,67 @@
 
 from tradingagents.agents.utils.agent_states import AgentState
 
+# Maximum number of tool-call iterations allowed per analyst before forcing exit.
+# Prevents models that loop on tool calls (e.g. DashScope kimi / GLM) from
+# running indefinitely without producing a final text report.
+MAX_ANALYST_TOOL_ITERATIONS = 5
+
+
+def _count_tool_call_rounds(messages, analyst_node_name: str) -> int:
+    """Count how many times the given analyst node has emitted tool_calls."""
+    count = 0
+    for m in messages:
+        if (
+            getattr(m, "name", None) == analyst_node_name
+            or getattr(m, "response_metadata", {}).get("model_provider") is not None
+        ) and getattr(m, "tool_calls", None):
+            count += 1
+    return count
+
+
+def _analyst_tool_calls_in_messages(messages) -> int:
+    """Count AI messages with tool_calls in the current message list."""
+    return sum(
+        1 for m in messages
+        if hasattr(m, "tool_calls") and m.tool_calls
+    )
+
 
 class ConditionalLogic:
     """Handles conditional logic for determining graph flow."""
 
-    def __init__(self, max_debate_rounds=1, max_risk_discuss_rounds=1):
+    def __init__(self, max_debate_rounds=1, max_risk_discuss_rounds=1,
+                 max_analyst_tool_iterations=MAX_ANALYST_TOOL_ITERATIONS):
         """Initialize with configuration parameters."""
         self.max_debate_rounds = max_debate_rounds
         self.max_risk_discuss_rounds = max_risk_discuss_rounds
+        self.max_analyst_tool_iterations = max_analyst_tool_iterations
+
+    def _should_continue_analyst(self, state: AgentState, tools_node: str) -> str:
+        """Shared logic: continue to tools_node unless max iterations reached."""
+        messages = state["messages"]
+        last_message = messages[-1]
+        if last_message.tool_calls:
+            tool_rounds = _analyst_tool_calls_in_messages(messages)
+            if tool_rounds <= self.max_analyst_tool_iterations:
+                return tools_node
+        return "Analyst Join"
 
     def should_continue_market(self, state: AgentState):
         """Determine if market analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_market"
-        return "Analyst Join"
+        return self._should_continue_analyst(state, "tools_market")
 
     def should_continue_social(self, state: AgentState):
         """Determine if social media analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_social"
-        return "Analyst Join"
+        return self._should_continue_analyst(state, "tools_social")
 
     def should_continue_news(self, state: AgentState):
         """Determine if news analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_news"
-        return "Analyst Join"
+        return self._should_continue_analyst(state, "tools_news")
 
     def should_continue_fundamentals(self, state: AgentState):
         """Determine if fundamentals analysis should continue."""
-        messages = state["messages"]
-        last_message = messages[-1]
-        if last_message.tool_calls:
-            return "tools_fundamentals"
-        return "Analyst Join"
+        return self._should_continue_analyst(state, "tools_fundamentals")
 
     def should_continue_debate(self, state: AgentState) -> str:
         """Determine if debate should continue."""

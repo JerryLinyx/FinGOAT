@@ -25,8 +25,11 @@
   - Record: `records/2026-03-13-ollama-embedding-routing.md`
 - [x] Handle DashScope embedding input-length failures with retry-based fallback truncation
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
-- [ ] Verify end-to-end provider fidelity when Aliyun DashScope is selected
+- [ ] Verify end-to-end provider fidelity when Aliyun DashScope is selected (blocked by orphan tool-call bug)
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
+- [ ] Fix DashScope tool-call orphan bug: sanitize assistant messages with unpaired `tool_calls` before DashScope API calls (affects GLM-4.7, kimi-k2.5, and any DashScope model that uses tools)
+  - Record: `records/2026-03-15-p1-cleanup-and-dashscope-tool-call-bug.md`
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
 - [x] Sanitize LangChain message objects before persisting `analysis_report`
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
 - [x] Add a mock analysis pipeline testcase that runs the task lifecycle without real model or vendor calls
@@ -48,18 +51,18 @@
 
 ## P1
 
-- [ ] Add user profile page and backend profile APIs (view/edit basic account information)
-  - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
-- [ ] Add user API key configuration page and secure backend contracts (provider-scoped key write/update without plaintext echo)
-  - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
+- [x] Add user profile page and backend profile APIs (view/edit basic account information)
+  - Record: `records/2026-03-13-user-account-and-byok-requirements.md` (backend + frontend already implemented)
+- [x] Add user API key configuration page and secure backend contracts (provider-scoped key write/update without plaintext echo)
+  - Record: `records/2026-03-13-user-account-and-byok-requirements.md` (backend + frontend already implemented)
 - [x] Add chart query history panel (deduplicated symbol list, re-query pins symbol to top by recency)
   - Record: `records/2026-03-14-chart-feature-and-tactile-ui-implementation.md`
-- [ ] Add TradingAgents duplicate-run guard in dashboard: prompt confirmation when same user re-runs same symbol on same analysis date
-  - Record: `records/2026-03-13-trading-analysis-duplicate-guard-requirements.md`
-- [ ] Remove stale frontend dev proxy path `/trading -> :8001` if frontend no longer calls Python APIs directly
-  - Record: `records/2026-03-13-v020-kickoff-requirements.md`
-- [ ] Add boundary regression checks to prevent reintroducing direct frontend->Python or Go->Python analyze-path coupling
-  - Record: `records/2026-03-13-v020-kickoff-requirements.md`
+- [x] Add TradingAgents duplicate-run guard in dashboard: prompt confirmation when same user re-runs same symbol on same analysis date
+  - Record: `records/2026-03-15-p1-cleanup-and-dashscope-tool-call-bug.md`
+- [x] Remove stale frontend dev proxy path `/trading -> :8001` if frontend no longer calls Python APIs directly
+  - Record: `records/2026-03-15-p1-cleanup-and-dashscope-tool-call-bug.md`
+- [x] Add boundary regression checks to prevent reintroducing direct frontend->Python or Go->Python analyze-path coupling
+  - Record: `records/2026-03-15-p1-cleanup-and-dashscope-tool-call-bug.md`
 - [x] Add stage timing and key outputs to the mainline analysis response
   - Record: `records/2026-03-13-stage-timing-and-stage-view.md`
 - [x] Add stage-based frontend analysis view
@@ -127,3 +130,13 @@
 - [x] Remove misleading article sentiment tags from the feed UI when no sentiment pipeline exists
   - Record: `records/2026-03-13-rss-refresh-deduplication.md`
 - [ ] Add vendor fetch deduplication and runtime caching for expensive data calls
+- [x] Migrate ALPHA_VANTAGE_API_KEY from startup env var to per-user DB key (BYOK)
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+- [x] Inject user LLM API keys server-side so Python never falls back to env vars
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+- [x] Gate API mode provider dropdown by configured keys; clear all API provider model presets
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+- [x] Add max tool-call iteration guard to analyst nodes (prevent infinite loop on DashScope models)
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+- [x] Raise LLM timeout default from 60s to 300s to accommodate slow large models
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
