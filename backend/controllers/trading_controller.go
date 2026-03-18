@@ -75,6 +75,12 @@ func RequestAnalysis(c *gin.Context) {
 		return
 	}
 
+	// Validate fields (aligned with Python Pydantic constraints)
+	if validationErr := validateAnalysisRequest(&req); validationErr != "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": validationErr})
+		return
+	}
+
 	// Get user ID from JWT context
 	userID, exists := c.Get("user_id")
 	if !exists {

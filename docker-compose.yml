@@ -6,10 +6,12 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: 2233
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-2233}
       POSTGRES_DB: fingoat_db
-    ports:
-      - "5432:5432"
+    # No host port exposed — only reachable within fingoat-network.
+    # For local debugging: uncomment the next two lines.
+    # ports:
+    #   - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -23,8 +25,9 @@ services:
     image: redis:7.2-alpine
     container_name: fingoat-redis
     restart: unless-stopped
-    ports:
-      - "6379:6379"
+    # No host port exposed — only reachable within fingoat-network.
+    # ports:
+    #   - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -40,21 +43,27 @@ services:
       dockerfile: Dockerfile
     container_name: fingoat-backend
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    # No host port exposed — nginx reverse-proxies /api/ to backend:3000.
+    # ports:
+    #   - "3000:3000"
     environment:
       - GIN_MODE=release
       - APP_PORT=:3000
       - DB_HOST=postgres
       - DB_PORT=5432
       - DB_USER=postgres
-      - DB_PASSWORD=2233
+      - DB_PASSWORD=${POSTGRES_PASSWORD:-2233}
       - DB_NAME=fingoat_db
       - REDIS_ADDR=redis:6379
       - TRADING_SERVICE_URL=http://trading-service:8001
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-}
+      # JWT signing secret — override with a strong random value in production.
+      - JWT_SECRET=${JWT_SECRET:-fingoat-dev-jwt-secret-DO-NOT-USE-IN-PROD}
+      # AES-256-GCM key for user BYOK API key encryption (base64, must decode to 32 bytes).
+      # Dev default is intentionally weak — replace before deploying.
+      - BYOK_ENCRYPTION_KEY=${BYOK_ENCRYPTION_KEY:-ZmluZ29hdC1kZXYtaW5zZWN1cmUta2V5LTMyYnl0ZXM=}
       # Override in production: comma-separated origins, or "*" (disables credentials)
-      - FRONTEND_ORIGINS=http://localhost,http://localhost:8080
+      - FRONTEND_ORIGINS=${FRONTEND_ORIGINS:-http://localhost,http://localhost:8080}
     depends_on:
       postgres:
         condition: service_healthy
@@ -75,8 +84,9 @@ services:
       dockerfile: Dockerfile.trading
     container_name: fingoat-trading
     restart: unless-stopped
-    ports:
-      - "8001:8001"
+    # No host port exposed — internal worker only, reached via backend proxy.
+    # ports:
+    #   - "8001:8001"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
@@ -91,6 +101,7 @@ services:
       - LLM_DEEP_MODEL=gemma3:1b
       - LLM_TIMEOUT=120
       - LLM_TEMPERATURE=0.2
+      - FRONTEND_ORIGINS=${FRONTEND_ORIGINS:-http://localhost,http://localhost:8080}
       - DEBUG=true
       - LOG_LEVEL=INFO
     env_file:
@@ -109,8 +120,9 @@ services:
       dockerfile: Dockerfile
     container_name: fingoat-frontend
     restart: unless-stopped
-    ports:
-      - "8080:80"
+    # No host port exposed — nginx reverse-proxies / to frontend:80.
+    # ports:
+    #   - "8080:80"
     depends_on:
       - backend
     environment:
@@ -130,7 +142,6 @@ services:
     depends_on:
       - frontend
       - backend
-      - trading-service
     ports:
       - "80:80"
     volumes:

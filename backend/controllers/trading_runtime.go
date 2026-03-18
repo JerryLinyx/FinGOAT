@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -15,6 +16,46 @@ import (
 	"github.com/go-redis/redis/v8"
 	"gorm.io/gorm"
 )
+
+// --------------------------------------------------------------------------- //
+// Input validation helpers — aligned with Python Pydantic constraints.         //
+// --------------------------------------------------------------------------- //
+
+var (
+	// tickerPattern matches 1-10 uppercase letters, digits, dots, or hyphens (e.g. "AAPL", "BRK.B", "005930.KS").
+	tickerPattern = regexp.MustCompile(`^[A-Za-z0-9.\-]{1,10}$`)
+	// datePattern matches YYYY-MM-DD.
+	datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+)
+
+// validateAnalysisRequest returns a human-readable error message for the first
+// validation failure, or "" if the request is valid.
+func validateAnalysisRequest(req *AnalysisRequest) string {
+	// Ticker: 1-10 chars, alphanumeric + dot + hyphen
+	if !tickerPattern.MatchString(req.Ticker) {
+		return "ticker must be 1-10 characters (letters, digits, dots, hyphens)"
+	}
+
+	// Date: YYYY-MM-DD format and parseable
+	if !datePattern.MatchString(req.Date) {
+		return "date must be in YYYY-MM-DD format"
+	}
+	if _, err := time.Parse("2006-01-02", req.Date); err != nil {
+		return "date is not a valid calendar date"
+	}
+
+	// LLM config bounds (aligned with Python ge=1, le=5)
+	if req.LLMConfig != nil {
+		if r := req.LLMConfig.MaxDebateRounds; r != 0 && (r < 1 || r > 5) {
+			return "max_debate_rounds must be between 1 and 5"
+		}
+		if r := req.LLMConfig.MaxRiskDiscussRounds; r != 0 && (r < 1 || r > 5) {
+			return "max_risk_discuss_rounds must be between 1 and 5"
+		}
+	}
+
+	return ""
+}
 
 const (
 	tradingRuntimeKeyPrefix   = "trading:analysis:runtime:"

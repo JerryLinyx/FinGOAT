@@ -55,10 +55,14 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
+_cors_origins_raw = os.getenv("FRONTEND_ORIGINS", "http://localhost:8080,http://localhost:5173")
+_cors_origins = [o.strip() for o in _cors_origins_raw.split(",") if o.strip()]
+_cors_allow_creds = not (_cors_origins == ["*"])
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:8080", "http://localhost:5173"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_allow_creds,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -1145,15 +1149,26 @@ async def health_check() -> HealthResponse:
     )
 
 
-@app.post("/api/v1/analyze", response_model=AnalysisResponse, status_code=status.HTTP_202_ACCEPTED)
+# --------------------------------------------------------------------------- #
+# DEPRECATED: Direct analysis endpoints.                                       #
+# All analysis requests must go through the Go backend, which enqueues tasks   #
+# via Redis.  These endpoints are retained for local debugging only and will   #
+# be removed in a future release.                                              #
+# --------------------------------------------------------------------------- #
+
+@app.post("/api/v1/analyze", response_model=AnalysisResponse, status_code=status.HTTP_202_ACCEPTED,
+          deprecated=True, tags=["deprecated"])
 async def analyze_stock(request: AnalysisRequest) -> AnalysisResponse:
+    """DEPRECATED — use Go backend POST /api/trading/analyze instead."""
     ensure_worker_thread_running()
     task_state = enqueue_analysis_request(request)
     return AnalysisResponse(**task_state)
 
 
-@app.post("/api/v1/analyze/sync", response_model=AnalysisResponse)
+@app.post("/api/v1/analyze/sync", response_model=AnalysisResponse,
+          deprecated=True, tags=["deprecated"])
 async def analyze_stock_sync(request: AnalysisRequest) -> AnalysisResponse:
+    """DEPRECATED — use Go backend POST /api/trading/analyze instead."""
     task_id = request.task_id or str(uuid.uuid4())
     request.task_id = task_id
 
@@ -1233,8 +1248,9 @@ async def stream_analysis_events(task_id: str, request: Request):  # type: ignor
     return EventSourceResponse(event_gen())
 
 
-@app.get("/api/v1/tasks")
+@app.get("/api/v1/tasks", deprecated=True, tags=["deprecated"])
 async def list_tasks(limit: int = 10) -> Dict[str, Any]:
+    """DEPRECATED — use Go backend GET /api/trading/analyses instead."""
     task_ids = get_redis_client().lrange(RECENT_TASKS_KEY, 0, max(limit, 1)-1)
     tasks: List[Dict[str, Any]] = []
     for task_id in task_ids:
@@ -1248,8 +1264,9 @@ async def list_tasks(limit: int = 10) -> Dict[str, Any]:
     }
 
 
-@app.delete("/api/v1/analysis/{task_id}")
+@app.delete("/api/v1/analysis/{task_id}", deprecated=True, tags=["deprecated"])
 async def delete_task(task_id: str) -> Dict[str, str]:
+    """DEPRECATED — use Go backend POST /api/trading/analysis/{task_id}/cancel instead."""
     task_state = load_task_state(task_id)
     if task_state is None:
         raise HTTPException(
@@ -1264,8 +1281,9 @@ async def delete_task(task_id: str) -> Dict[str, str]:
     return {"message": f"Task {task_id} deleted"}
 
 
-@app.get("/api/v1/config", response_model=Dict[str, Any])
+@app.get("/api/v1/config", response_model=Dict[str, Any], deprecated=True, tags=["deprecated"])
 async def get_default_config() -> Dict[str, Any]:
+    """DEPRECATED — config is now managed by Go backend per-user profile."""
     return {
         "llm_config": {
             "deep_think_llm": DEFAULT_CONFIG["deep_think_llm"],

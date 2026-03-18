@@ -1,6 +1,11 @@
 # TradingAgents/graph/conditional_logic.py
 
+import copy
+import logging
+
 from tradingagents.agents.utils.agent_states import AgentState
+
+logger = logging.getLogger(__name__)
 
 # Maximum number of tool-call iterations allowed per analyst before forcing exit.
 # Prevents models that loop on tool calls (e.g. DashScope kimi / GLM) from
@@ -28,6 +33,63 @@ def _analyst_tool_calls_in_messages(messages) -> int:
     )
 
 
+def sanitize_orphan_tool_calls(messages: list) -> list:
+    """Strip orphaned tool_calls from the tail of a message list.
+
+    DashScope (and other strict providers) reject message histories where an
+    AIMessage has ``tool_calls`` but is NOT immediately followed by the
+    corresponding ``ToolMessage`` responses.  This typically happens when an
+    analyst hits the iteration limit and we exit the tool-calling loop early.
+
+    The function works **backwards** from the end of the list, removing
+    ``tool_calls`` (and the matching ``additional_kwargs`` entry) from any
+    trailing AIMessage that lacks a paired ToolMessage.  It stops as soon as
+    it encounters a properly-paired tool call or a non-AI message.
+
+    Returns a *new* list (original is not mutated).
+    """
+    if not messages:
+        return messages
+
+    result = list(messages)  # shallow copy
+    i = len(result) - 1
+
+    while i >= 0:
+        msg = result[i]
+        # Only AIMessages (or subclasses) carry tool_calls
+        if not getattr(msg, "tool_calls", None):
+            break  # no orphan — stop scanning
+
+        # Check whether the *next* message (i+1) is a ToolMessage for this call
+        has_paired_tool = False
+        if i + 1 < len(result):
+            next_msg = result[i + 1]
+            if getattr(next_msg, "type", None) == "tool":
+                has_paired_tool = True
+
+        if has_paired_tool:
+            break  # properly paired — nothing to clean
+
+        # Orphan detected: deep-copy and strip tool_calls
+        cleaned = copy.copy(msg)
+        cleaned.tool_calls = []
+        if hasattr(cleaned, "additional_kwargs"):
+            cleaned.additional_kwargs = {
+                k: v for k, v in cleaned.additional_kwargs.items()
+                if k != "tool_calls"
+            }
+        # Preserve any text content the model did produce
+        result[i] = cleaned
+        logger.warning(
+            "Stripped orphaned tool_calls from message at index %d "
+            "(likely analyst hit iteration limit)",
+            i,
+        )
+        i -= 1
+
+    return result
+
+
 class ConditionalLogic:
     """Handles conditional logic for determining graph flow."""
 
@@ -46,6 +108,13 @@ class ConditionalLogic:
             tool_rounds = _analyst_tool_calls_in_messages(messages)
             if tool_rounds <= self.max_analyst_tool_iterations:
                 return tools_node
+            # Iteration limit reached — sanitize orphaned tool_calls so that
+            # strict providers (DashScope) don't reject downstream LLM calls.
+            logger.info(
+                "Analyst tool-call limit (%d) reached; sanitizing messages",
+                self.max_analyst_tool_iterations,
+            )
+            state["messages"] = sanitize_orphan_tool_calls(messages)
         return "Analyst Join"
 
     def should_continue_market(self, state: AgentState):

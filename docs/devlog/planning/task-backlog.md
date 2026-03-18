@@ -6,15 +6,18 @@
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
 - [ ] Add email-based auth flow (register/login) with backward-compatible migration path for existing username users
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
-- [ ] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
+- [x] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
   - Record: `records/2026-03-13-v020-kickoff-requirements.md`
-- [ ] Restrict or deprecate Python public task endpoints (`/api/v1/analyze`, `/api/v1/analysis/{task_id}`) from production exposure
+  - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md` (CORS dynamic, port convergence, nginx route removal)
+- [x] Restrict or deprecate Python public task endpoints (`/api/v1/analyze`, `/api/v1/analysis/{task_id}`) from production exposure
   - Record: `records/2026-03-13-v020-kickoff-requirements.md`
+  - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md` (all endpoints marked deprecated=True)
 - [x] Redesign analysis task state lifecycle
   - Record: `records/2026-03-13-task-state-redesign.md`
 - [x] Define PostgreSQL and Redis boundary for task execution
   - Record: `records/2026-03-13-redis-postgres-boundary.md`
-- [ ] Replace weak Go/Python response parsing with typed contracts
+- [x] Replace weak Go/Python response parsing with typed contracts
+  - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md` (Go-side validators for ticker, date, debate/risk rounds; aligned with Python Pydantic)
 - [x] Unify auth header contract and service-side validation behavior
   - Record: `records/2026-03-13-task-state-redesign.md`
 - [x] Add `qwen3.5-flash` as an Aliyun DashScope model preset for provider testing
@@ -27,9 +30,10 @@
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
 - [ ] Verify end-to-end provider fidelity when Aliyun DashScope is selected (blocked by orphan tool-call bug)
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
-- [ ] Fix DashScope tool-call orphan bug: sanitize assistant messages with unpaired `tool_calls` before DashScope API calls (affects GLM-4.7, kimi-k2.5, and any DashScope model that uses tools)
+- [x] Fix DashScope tool-call orphan bug: sanitize assistant messages with unpaired `tool_calls` before DashScope API calls (affects GLM-4.7, kimi-k2.5, and any DashScope model that uses tools)
   - Record: `records/2026-03-15-p1-cleanup-and-dashscope-tool-call-bug.md`
   - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+  - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md` (sanitize_orphan_tool_calls in conditional_logic.py)
 - [x] Sanitize LangChain message objects before persisting `analysis_report`
   - Record: `records/2026-03-13-dashscope-qwen35-flash-provider-verification.md`
 - [x] Add a mock analysis pipeline testcase that runs the task lifecycle without real model or vendor calls
@@ -140,3 +144,7 @@
   - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
 - [x] Raise LLM timeout default from 60s to 300s to accommodate slow large models
   - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+- [x] Inject JWT_SECRET and BYOK_ENCRYPTION_KEY into docker-compose with secure dev defaults; parameterize POSTGRES_PASSWORD
+  - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md`
+- [x] Full-Docker local deployment validated: nginx sole external port, all API calls relative-path routed, frontend API_BASE_URL = '' correct
+  - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md`
