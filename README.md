@@ -42,123 +42,26 @@ Here is tutorial on how to deploy this on GCP. However, it is highly recommended
 ```bash
 git clone https://github.com/JerryLinyx/FinGOAT.git
 cd FinGOAT
+docker compose up --build
 ```
 
 ![](assets/appinfra.png)
 
-### Backend Setup (Gin+GORM+PostgreSQL+Redis+Viper+JWT+Docker)
+This is the authoritative local startup flow for the full stack. It builds and starts nginx, frontend, Go backend, Python trading service, PostgreSQL, and Redis together.
 
-#### Install dependencies
-```bash
-cd backend
+After startup:
 
-go mod init github.com/JerryLinyx/FinGOAT
+- App entry: `http://localhost`
+- Go health: `http://localhost/api/health`
+- Trading health: `http://localhost/api/trading/health`
 
-go get -u github.com/gin-gonic/gin
-go get github.com/spf13/viper
-go get -u gorm.io/gorm
-go get -u gorm.io/driver/postgres
-go get -u google.golang.org/grpc
-go get -u golang.org/x/crypto/bcrypt
-go get github.com/golang-jwt/jwt/v5
-go get -u github.com/go-redis/redis/v8
-go get github.com/gin-contrib/cors
+### Component-Only Development
 
-go mod tidy
-```
+If you need to debug a single service in isolation, treat that as an exception path. The repo default is still root-level Docker Compose startup. Service-specific notes live in:
 
-#### Start PostgreSQL
-```bash
-docker pull postgres:15.14-alpine3.21
-
-docker run --name fingoat-pg \
-  --restart=unless-stopped \
-  -d -p 5432:5432 \
-  -v pgdata:/var/lib/postgresql/data \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=2233 \
-  -e POSTGRES_DB=fingoat_db \
-  postgres:15.14-alpine3.21
-```
-#### Start Redis
-```bash
-docker run -d \
-  --name fingoat-redis \
-  -p 6379:6379 \
-  -v redisdata:/data \
-  redis:7.2
-```
-#### Run the Server
-```bash
-go run main.go
-# curl http://localhost:3000/api/trading/health
-```
-
-
-### Frontend Setup (TypeScript+Vite+React)
-```bash
-npm create vite@latest frontend
-
-cd frontend
-npm install
-npm run build
-npm run dev
-# http://localhost:5173/
-```
-
-### Agents Setup (LangChain+LangGraph+FastAPI)
-
-1) Create Python env and install deps
-```bash
-cd langchain-v1
-python3 -m venv .venv
-source .venv/bin/activate
-
-# if needed
-conda deactivate
-
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# for python3
-# python3 -m pip install --upgrade pip
-# python3 -m pip install -r requirements.txt
-```
-
-2) Configure API keys and service settings
-```bash
-cp .env.trading .env
-# set OPENAI_API_KEY and ALPHA_VANTAGE_API_KEY (Or other apis)
-# adjust TRADING_SERVICE_PORT / CORS_ORIGINS if needed
-```
-
-3) Run the FastAPI microservice
-```bash
-# dev mode (auto reload logs to console)
-python trading_service.py
-# python3 trading_service.py
-# http://localhost:8001/
-
-# production-style
-uvicorn trading_service:app --host 0.0.0.0 --port 8001 --workers 4
-```
-Service docs live at http://localhost:8001/docs and health at `/health`.
-
-4) Sample request to trigger analysis
-```bash
-curl -X POST http://localhost:8001/api/v1/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-        "ticker": "NVDA",
-        "date": "2024-05-10",
-        "llm_config": {
-          "deep_think_llm": "gpt-4o-mini",
-          "quick_think_llm": "gpt-4o-mini",
-          "max_debate_rounds": 1
-        }
-      }'
-```
-The response returns a `task_id`; poll `/api/v1/analysis/{task_id}` for the result.
+- [docs/local-dev-operations.md](./docs/local-dev-operations.md)
+- [backend/TRADING_API.md](./backend/TRADING_API.md)
+- [langchain-v1/TRADING_SERVICE_README.md](./langchain-v1/TRADING_SERVICE_README.md)
 
 #### Screenshots
 **Login Page**

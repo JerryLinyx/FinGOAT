@@ -42,6 +42,8 @@ backtrader>=1.9.78.123
 # Storage & Cache
 chromadb>=1.0.12
 redis>=6.2.0
+psycopg2-binary>=2.9.9
+pgvector>=0.3.0
 
 # CLI & UI
 chainlit>=2.5.5

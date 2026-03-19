@@ -23,7 +23,8 @@ import (
 
 var (
 	// tickerPattern matches 1-10 uppercase letters, digits, dots, or hyphens (e.g. "AAPL", "BRK.B", "005930.KS").
-	tickerPattern = regexp.MustCompile(`^[A-Za-z0-9.\-]{1,10}$`)
+	tickerPattern   = regexp.MustCompile(`^[A-Za-z0-9.\-]{1,10}$`)
+	cnTickerPattern = regexp.MustCompile(`^\d{6}$`)
 	// datePattern matches YYYY-MM-DD.
 	datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
@@ -31,9 +32,18 @@ var (
 // validateAnalysisRequest returns a human-readable error message for the first
 // validation failure, or "" if the request is valid.
 func validateAnalysisRequest(req *AnalysisRequest) string {
-	// Ticker: 1-10 chars, alphanumeric + dot + hyphen
-	if !tickerPattern.MatchString(req.Ticker) {
-		return "ticker must be 1-10 characters (letters, digits, dots, hyphens)"
+	switch normalizeMarket(req.Market) {
+	case "cn":
+		if !cnTickerPattern.MatchString(req.Ticker) {
+			return "A-share ticker must be a 6-digit stock code"
+		}
+		if strings.HasPrefix(req.Ticker, "8") {
+			return "Beijing Stock Exchange tickers are not supported in v1"
+		}
+	default:
+		if !tickerPattern.MatchString(req.Ticker) {
+			return "ticker must be 1-10 characters (letters, digits, dots, hyphens)"
+		}
 	}
 
 	// Date: YYYY-MM-DD format and parseable
@@ -87,14 +97,15 @@ type DataVendorConfig struct {
 }
 
 type AnalysisRequest struct {
-	TaskID              string            `json:"task_id,omitempty"`
-	UserID              uint              `json:"user_id,omitempty"`
-	Ticker              string            `json:"ticker" binding:"required"`
-	Date                string            `json:"date" binding:"required"`
-	ExecutionMode       string            `json:"execution_mode,omitempty"`
-	LLMConfig           *LLMConfig        `json:"llm_config,omitempty"`
-	DataVendorConfig    *DataVendorConfig `json:"data_vendor_config,omitempty"`
-	AlphaVantageAPIKey  string            `json:"alpha_vantage_api_key,omitempty"`
+	TaskID             string            `json:"task_id,omitempty"`
+	UserID             uint              `json:"user_id,omitempty"`
+	Ticker             string            `json:"ticker" binding:"required"`
+	Market             string            `json:"market,omitempty"`
+	Date               string            `json:"date" binding:"required"`
+	ExecutionMode      string            `json:"execution_mode,omitempty"`
+	LLMConfig          *LLMConfig        `json:"llm_config,omitempty"`
+	DataVendorConfig   *DataVendorConfig `json:"data_vendor_config,omitempty"`
+	AlphaVantageAPIKey string            `json:"alpha_vantage_api_key,omitempty"`
 }
 
 type TradingDecisionPayload struct {
@@ -126,6 +137,7 @@ type RuntimeTaskState struct {
 	Status                string                  `json:"status"`
 	CancelRequested       bool                    `json:"cancel_requested,omitempty"`
 	Ticker                string                  `json:"ticker"`
+	Market                string                  `json:"market,omitempty"`
 	Date                  string                  `json:"date"`
 	ExecutionMode         string                  `json:"execution_mode,omitempty"`
 	Decision              *TradingDecisionPayload `json:"decision,omitempty"`
@@ -141,6 +153,7 @@ type AnalysisTaskResponse struct {
 	ID                    uint                    `json:"id"`
 	TaskID                string                  `json:"task_id"`
 	Ticker                string                  `json:"ticker"`
+	Market                string                  `json:"market"`
 	AnalysisDate          string                  `json:"analysis_date"`
 	Status                string                  `json:"status"`
 	ExecutionMode         string                  `json:"execution_mode"`
@@ -166,6 +179,42 @@ func normalizeLLMProviderName(provider string) string {
 		return "dashscope"
 	}
 	return normalized
+}
+
+func normalizeMarket(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "cn":
+		return "cn"
+	default:
+		return "us"
+	}
+}
+
+func normalizeTickerForMarket(ticker string, market string) string {
+	trimmed := strings.TrimSpace(ticker)
+	if normalizeMarket(market) == "cn" {
+		return trimmed
+	}
+	return strings.ToUpper(trimmed)
+}
+
+func defaultDataVendorConfigForMarket(market string) *DataVendorConfig {
+	switch normalizeMarket(market) {
+	case "cn":
+		return &DataVendorConfig{
+			CoreStockAPIs:       "akshare",
+			TechnicalIndicators: "akshare",
+			FundamentalData:     "akshare",
+			NewsData:            "akshare",
+		}
+	default:
+		return &DataVendorConfig{
+			CoreStockAPIs:       "yfinance",
+			TechnicalIndicators: "yfinance",
+			FundamentalData:     "alpha_vantage",
+			NewsData:            "alpha_vantage",
+		}
+	}
 }
 
 func generateTaskID() (string, error) {
@@ -329,10 +378,12 @@ func normalizeExecutionMode(raw string) string {
 
 func marshalTaskConfig(request *AnalysisRequest) (*string, error) {
 	config := struct {
+		Market           string            `json:"market,omitempty"`
 		ExecutionMode    string            `json:"execution_mode,omitempty"`
 		LLMConfig        *LLMConfig        `json:"llm_config,omitempty"`
 		DataVendorConfig *DataVendorConfig `json:"data_vendor_config,omitempty"`
 	}{
+		Market:           normalizeMarket(request.Market),
 		ExecutionMode:    normalizeExecutionMode(request.ExecutionMode),
 		LLMConfig:        request.LLMConfig,
 		DataVendorConfig: request.DataVendorConfig,
@@ -440,6 +491,7 @@ func buildAnalysisTaskResponse(task *models.TradingAnalysisTask, runtime *Runtim
 		ID:                    task.ID,
 		TaskID:                task.TaskID,
 		Ticker:                task.Ticker,
+		Market:                normalizeMarket(task.Market),
 		AnalysisDate:          task.AnalysisDate,
 		Status:                task.Status,
 		ExecutionMode:         normalizeExecutionMode(task.ExecutionMode),
@@ -471,6 +523,9 @@ func buildAnalysisTaskResponse(task *models.TradingAnalysisTask, runtime *Runtim
 	}
 	if runtime.ExecutionMode != "" {
 		response.ExecutionMode = normalizeExecutionMode(runtime.ExecutionMode)
+	}
+	if runtime.Market != "" {
+		response.Market = normalizeMarket(runtime.Market)
 	}
 	if runtime.Error != "" {
 		response.Error = runtime.Error
@@ -567,6 +622,10 @@ func persistTaskFromRuntime(ctx context.Context, task *models.TradingAnalysisTas
 		task.ExecutionMode = normalizeExecutionMode(runtime.ExecutionMode)
 		changed = true
 	}
+	if runtime.Market != "" && task.Market != normalizeMarket(runtime.Market) {
+		task.Market = normalizeMarket(runtime.Market)
+		changed = true
+	}
 	if runtime.Error != "" && task.Error != runtime.Error {
 		task.Error = runtime.Error
 		changed = true
@@ -625,6 +684,11 @@ func persistTaskFromRuntime(ctx context.Context, task *models.TradingAnalysisTas
 		}
 
 		task.Decision = &decision
+
+	}
+
+	if err := EnsureTaskUsageIngested(ctx, task); err != nil {
+		return err
 	}
 
 	if changed {
@@ -678,6 +742,8 @@ func unmarshalTaskConfig(raw *string) (*AnalysisRequest, error) {
 	if err := json.Unmarshal([]byte(*raw), &req); err != nil {
 		return nil, err
 	}
+	req.Market = normalizeMarket(req.Market)
+	req.Ticker = normalizeTickerForMarket(req.Ticker, req.Market)
 	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
 	return &req, nil
 }

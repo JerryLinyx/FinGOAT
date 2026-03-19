@@ -4,11 +4,17 @@ import (
 	"errors"
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"golang.org/x/crypto/bcrypt"
 )
+
+type AuthIdentity struct {
+	UserID   uint
+	Username string
+}
 
 // jwtSecret returns the JWT signing secret from the JWT_SECRET environment
 // variable. Falls back to an insecure dev value and logs a warning if unset.
@@ -29,8 +35,9 @@ func HashPassword(password string) (string, error) {
 	return string(hashedPassword), nil
 }
 
-func GenerateJWT(username string) (string, error) {
+func GenerateJWT(userID uint, username string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
+		"uid":      userID,
 		"username": username,
 		"exp":      time.Now().Add(time.Hour * 24).Unix(),
 	})
@@ -46,7 +53,7 @@ func CheckPassword(password string, hashedPassword string) bool {
 	return err == nil
 }
 
-func ParseJWT(tokenString string) (string, error) {
+func ParseJWT(tokenString string) (AuthIdentity, error) {
 	if len(tokenString) > 7 && tokenString[:7] == "Bearer " {
 		tokenString = tokenString[7:]
 	}
@@ -59,14 +66,56 @@ func ParseJWT(tokenString string) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return AuthIdentity{}, err
 	}
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		username, ok := claims["username"].(string)
-		if !ok {
-			return "", errors.New("username claim is not a string")
+		identity := AuthIdentity{}
+		if username, ok := claims["username"].(string); ok {
+			identity.Username = username
 		}
-		return username, nil
+		if rawUserID, exists := claims["uid"]; exists {
+			userID, err := parseUintClaim(rawUserID)
+			if err != nil {
+				return AuthIdentity{}, err
+			}
+			identity.UserID = userID
+		}
+		if identity.UserID == 0 && identity.Username == "" {
+			return AuthIdentity{}, errors.New("token missing both uid and username claims")
+		}
+		return identity, nil
 	}
-	return "", errors.New("invalid token claims")
+	return AuthIdentity{}, errors.New("invalid token claims")
+}
+
+func parseUintClaim(raw interface{}) (uint, error) {
+	switch v := raw.(type) {
+	case float64:
+		if v < 0 {
+			return 0, errors.New("uid claim must be non-negative")
+		}
+		return uint(v), nil
+	case int:
+		if v < 0 {
+			return 0, errors.New("uid claim must be non-negative")
+		}
+		return uint(v), nil
+	case int64:
+		if v < 0 {
+			return 0, errors.New("uid claim must be non-negative")
+		}
+		return uint(v), nil
+	case uint:
+		return v, nil
+	case uint64:
+		return uint(v), nil
+	case string:
+		parsed, err := strconv.ParseUint(v, 10, 64)
+		if err != nil {
+			return 0, errors.New("uid claim is not a valid unsigned integer")
+		}
+		return uint(parsed), nil
+	default:
+		return 0, errors.New("uid claim has unsupported type")
+	}
 }

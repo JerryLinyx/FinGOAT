@@ -136,3 +136,35 @@ func TestQueuePayloadTaskID(t *testing.T) {
 		t.Fatalf("expected malformed payload to return empty task id, got %q", got)
 	}
 }
+
+func TestValidateAnalysisRequestForCNMarket(t *testing.T) {
+	valid := &AnalysisRequest{
+		Ticker: "600519",
+		Market: "cn",
+		Date:   "2026-03-18",
+	}
+	if got := validateAnalysisRequest(valid); got != "" {
+		t.Fatalf("validateAnalysisRequest(valid cn) = %q, want empty", got)
+	}
+
+	invalid := &AnalysisRequest{
+		Ticker: "AAPL",
+		Market: "cn",
+		Date:   "2026-03-18",
+	}
+	if got := validateAnalysisRequest(invalid); got == "" {
+		t.Fatalf("expected invalid CN ticker to fail validation")
+	}
+}
+
+func TestDefaultDataVendorConfigForMarket(t *testing.T) {
+	us := defaultDataVendorConfigForMarket("us")
+	if us.CoreStockAPIs != "yfinance" || us.NewsData != "alpha_vantage" {
+		t.Fatalf("unexpected us defaults: %#v", us)
+	}
+
+	cn := defaultDataVendorConfigForMarket("cn")
+	if cn.CoreStockAPIs != "akshare" || cn.TechnicalIndicators != "akshare" || cn.FundamentalData != "akshare" || cn.NewsData != "akshare" {
+		t.Fatalf("unexpected cn defaults: %#v", cn)
+	}
+}

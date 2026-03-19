@@ -2,7 +2,7 @@ import time
 import json
 
 
-def create_risk_manager(llm, memory):
+def create_risk_manager(llm, memory, usage_collector=None):
     def risk_manager_node(state) -> dict:
 
         company_name = state["company_of_interest"]
@@ -43,7 +43,10 @@ Deliverables:
 
 Focus on actionable insights and continuous improvement. Build on past lessons, critically evaluate all perspectives, and ensure each decision advances better outcomes."""
 
+        _start = time.time()
         response = llm.invoke(prompt)
+        if usage_collector:
+            usage_collector.record_llm_call("Risk Judge", response, _start)
 
         new_risk_debate_state = {
             "judge_decision": response.content,

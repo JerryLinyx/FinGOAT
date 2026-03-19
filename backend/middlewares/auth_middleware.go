@@ -23,23 +23,31 @@ func AuthMiddleware() gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-		username, err := utils.ParseJWT(token)
+		identity, err := utils.ParseJWT(token)
 		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "Unauthorized"})
 			c.Abort()
 			return
 		}
 
-		// Find user in database to get user ID
 		var user models.User
-		if err := global.DB.Where("username = ?", username).First(&user).Error; err != nil {
+		switch {
+		case identity.UserID != 0:
+			err = global.DB.First(&user, identity.UserID).Error
+		case identity.Username != "":
+			err = global.DB.Where("username = ?", identity.Username).First(&user).Error
+		default:
+			err = http.ErrNoCookie
+		}
+		if err != nil {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": "User not found"})
 			c.Abort()
 			return
 		}
 
-		c.Set("username", username)
+		c.Set("username", user.Username)
 		c.Set("user_id", user.ID)
+		c.Set("user_role", models.NormalizeUserRole(user.Role))
 		c.Next()
 	}
 }

@@ -7,6 +7,19 @@ from langgraph.prebuilt import ToolNode
 from langgraph.graph import END, StateGraph, START, MessagesState
 
 
+def keep_latest_non_empty(current: str, incoming: str) -> str:
+    """Reducer for parallel analyst reports.
+
+    LangGraph's default LastValue channel rejects multiple writes in the same
+    superstep. Parallel analysts can legitimately emit repeated empty-string
+    placeholders before a final report is available, so we merge by preserving
+    the latest non-empty value.
+    """
+    if incoming:
+        return incoming
+    return current
+
+
 # Researcher team state
 class InvestDebateState(TypedDict):
     bull_history: Annotated[
@@ -54,12 +67,12 @@ class AgentState(MessagesState):
     sender: Annotated[str, "Agent that sent this message"]
 
     # research step
-    market_report: Annotated[str, "Report from the Market Analyst"]
-    sentiment_report: Annotated[str, "Report from the Social Media Analyst"]
+    market_report: Annotated[str, keep_latest_non_empty]
+    sentiment_report: Annotated[str, keep_latest_non_empty]
     news_report: Annotated[
-        str, "Report from the News Researcher of current world affairs"
+        str, keep_latest_non_empty
     ]
-    fundamentals_report: Annotated[str, "Report from the Fundamentals Researcher"]
+    fundamentals_report: Annotated[str, keep_latest_non_empty]
 
     # researcher team discussion step
     investment_debate_state: Annotated[

@@ -1,7 +1,7 @@
 services:
   # PostgreSQL Database
   postgres:
-    image: postgres:15.14-alpine3.21
+    image: pgvector/pgvector:pg15
     container_name: fingoat-postgres
     restart: unless-stopped
     environment:
@@ -104,6 +104,12 @@ services:
       - FRONTEND_ORIGINS=${FRONTEND_ORIGINS:-http://localhost,http://localhost:8080}
       - DEBUG=true
       - LOG_LEVEL=INFO
+      - POSTGRES_DSN=postgresql://postgres:${POSTGRES_PASSWORD:-2233}@postgres:5432/fingoat_db
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
     env_file:
       - ./langchain-v1/.env
     healthcheck:

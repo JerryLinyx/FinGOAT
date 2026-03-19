@@ -3,6 +3,7 @@
 const rawApiUrl = import.meta.env.VITE_API_URL
 const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/$/, '') : ''
 const TOKEN_STORAGE_KEY = 'fingoat_token'
+export type MarketMode = 'us' | 'cn'
 
 const withBearerToken = (token: string | null): string => {
     if (!token) return ''
@@ -11,6 +12,7 @@ const withBearerToken = (token: string | null): string => {
 
 export interface AnalysisRequest {
     ticker: string
+    market?: MarketMode
     date: string
     execution_mode?: 'default' | 'openclaw'
     llm_config?: {
@@ -49,6 +51,7 @@ export interface AnalysisTask {
     id: number
     task_id: string
     ticker: string
+    market?: MarketMode
     analysis_date: string
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
     execution_mode: 'default' | 'openclaw'
@@ -91,6 +94,81 @@ export interface OHLCVPoint {
     volume: number
 }
 
+export type TerminalPeriod = 'day' | 'week' | 'month'
+
+export interface IndicatorPoint {
+    date: string
+    value: number
+}
+
+export interface ChartTerminalCapabilities {
+    chart: boolean
+    intraday: boolean
+    ma: boolean
+    macd: boolean
+    notices: boolean
+    terminal_sidebar: boolean
+    quote_polling: boolean
+}
+
+export interface ChartTerminalNotice {
+    title: string
+    date: string
+    type?: string | null
+    source: string
+    url?: string | null
+}
+
+export interface ChartTerminalMetric {
+    label: string
+    value: string
+}
+
+export interface ChartTerminalResponse {
+    ticker: string
+    market: MarketMode
+    name: string
+    period: TerminalPeriod
+    updated_at: string
+    chart: OHLCVPoint[]
+    indicators: {
+        ma: {
+            ma5: IndicatorPoint[]
+            ma10: IndicatorPoint[]
+            ma20: IndicatorPoint[]
+            ma60: IndicatorPoint[]
+        }
+        macd: {
+            dif: IndicatorPoint[]
+            dea: IndicatorPoint[]
+            hist: IndicatorPoint[]
+        }
+    }
+    sidebar: {
+        metrics: ChartTerminalMetric[]
+        notices: ChartTerminalNotice[]
+    }
+    capabilities: ChartTerminalCapabilities
+    partial: boolean
+}
+
+export interface ChartQuoteResponse {
+    ticker: string
+    market: MarketMode
+    name: string
+    updated_at: string
+    last_price?: number | null
+    change?: number | null
+    change_pct?: number | null
+    open?: number | null
+    high?: number | null
+    low?: number | null
+    prev_close?: number | null
+    volume?: number | null
+    amount?: number | null
+    turnover_rate?: number | null
+}
+
 export interface OllamaModel {
     name: string
     modified_at?: string
@@ -125,6 +203,7 @@ class TradingService {
 
     async requestAnalysis(
         ticker: string,
+        market: MarketMode,
         date: string,
         llmConfig?: AnalysisRequest['llm_config'],
         executionMode: AnalysisRequest['execution_mode'] = 'default',
@@ -132,7 +211,7 @@ class TradingService {
         const response = await fetch(`${API_BASE_URL}/api/trading/analyze`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
-            body: JSON.stringify({ ticker, date, execution_mode: executionMode, llm_config: llmConfig }),
+            body: JSON.stringify({ ticker, market, date, execution_mode: executionMode, llm_config: llmConfig }),
         })
 
         if (!response.ok) {
@@ -247,14 +326,40 @@ class TradingService {
         throw new Error('Analysis timeout - please check status manually')
     }
 
-    async getStockChart(ticker: string, range: string = '3m'): Promise<{ ticker: string; range: string; data: OHLCVPoint[] }> {
-        const response = await fetch(`${API_BASE_URL}/api/trading/chart/${encodeURIComponent(ticker)}?range=${range}`, {
+    async getStockChart(ticker: string, range: string = '3m', market: MarketMode = 'us'): Promise<{ ticker: string; market?: MarketMode; range: string; data: OHLCVPoint[] }> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/chart/${encodeURIComponent(ticker)}?range=${range}&market=${market}`, {
             headers: this.getAuthHeaders(),
         })
 
         if (!response.ok) {
             const error = await response.json().catch(() => ({ error: 'Failed to fetch chart data' }))
             throw new Error(error.error || 'Failed to fetch chart data')
+        }
+
+        return response.json()
+    }
+
+    async getTerminal(ticker: string, market: MarketMode, period: TerminalPeriod): Promise<ChartTerminalResponse> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/terminal/${encodeURIComponent(ticker)}?market=${market}&period=${period}`, {
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to fetch terminal data' }))
+            throw new Error(error.error || 'Failed to fetch terminal data')
+        }
+
+        return response.json()
+    }
+
+    async getQuote(ticker: string, market: MarketMode): Promise<ChartQuoteResponse> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/quote/${encodeURIComponent(ticker)}?market=${market}`, {
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to fetch quote data' }))
+            throw new Error(error.error || 'Failed to fetch quote data')
         }
 
         return response.json()

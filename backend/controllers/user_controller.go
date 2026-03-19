@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -8,9 +9,39 @@ import (
 	"github.com/JerryLinyx/FinGOAT/models"
 	"github.com/JerryLinyx/FinGOAT/utils"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
+
+func userProfileResponse(user models.User) gin.H {
+	email := ""
+	if user.Email != nil {
+		email = *user.Email
+	}
+
+	return gin.H{
+		"id":             user.ID,
+		"username":       user.Username,
+		"email":          email,
+		"email_verified": user.EmailVerified,
+		"display_name":   user.DisplayName,
+		"avatar_url":     user.AvatarURL,
+		"role":           models.NormalizeUserRole(user.Role),
+		"created_at":     user.CreatedAt,
+	}
+}
+
+func profileEmailChanged(current *string, next *string) bool {
+	switch {
+	case current == nil && next == nil:
+		return false
+	case current == nil || next == nil:
+		return true
+	default:
+		return *current != *next
+	}
+}
 
 func currentUserID(c *gin.Context) (uint, bool) {
 	v, exists := c.Get("user_id")
@@ -57,32 +88,27 @@ func GetProfile(c *gin.Context) {
 		return
 	}
 
-	email := ""
-	if user.Email != nil {
-		email = *user.Email
-	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"id":           user.ID,
-		"username":     user.Username,
-		"email":        email,
-		"display_name": user.DisplayName,
-		"avatar_url":   user.AvatarURL,
-		"created_at":   user.CreatedAt,
-	})
+	c.JSON(http.StatusOK, userProfileResponse(user))
 }
 
 // UpdateProfileInput holds the fields the user may self-edit.
 type UpdateProfileInput struct {
-	DisplayName string `json:"display_name"`
-	AvatarURL   string `json:"avatar_url"`
+	DisplayName string  `json:"display_name"`
+	AvatarURL   string  `json:"avatar_url"`
+	Email       *string `json:"email"`
 }
 
-// UpdateProfile edits the authenticated user's display name and avatar URL.
+// UpdateProfile edits the authenticated user's display name, avatar URL, and email.
 func UpdateProfile(c *gin.Context) {
 	uid, ok := currentUserID(c)
 	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	var currentUser models.User
+	if err := global.DB.First(&currentUser, uid).Error; err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "user not found"})
 		return
 	}
 
@@ -95,6 +121,36 @@ func UpdateProfile(c *gin.Context) {
 	updates := map[string]interface{}{
 		"display_name": strings.TrimSpace(input.DisplayName),
 		"avatar_url":   strings.TrimSpace(input.AvatarURL),
+	}
+	emailChanged := false
+	if input.Email != nil {
+		email, err := normalizeProfileEmail(input.Email)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		if email != nil {
+			var existing models.User
+			err := global.DB.Where("email = ? AND id <> ?", *email, uid).First(&existing).Error
+			switch {
+			case err == nil:
+				c.JSON(http.StatusConflict, gin.H{"error": "email already registered"})
+				return
+			case err != nil && !errors.Is(err, gorm.ErrRecordNotFound):
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			updates["email"] = *email
+		} else {
+			updates["email"] = nil
+		}
+
+		emailChanged = profileEmailChanged(currentUser.Email, email)
+
+		if emailChanged {
+			updates["email_verified"] = false
+		}
 	}
 
 	if err := global.DB.Model(&models.User{}).Where("id = ?", uid).Updates(updates).Error; err != nil {
@@ -109,19 +165,33 @@ func UpdateProfile(c *gin.Context) {
 		return
 	}
 
-	email := ""
-	if user.Email != nil {
-		email = *user.Email
+	if emailChanged {
+		if err := global.DB.Where("user_id = ? AND purpose = ? AND used_at IS NULL", user.ID, "verify").
+			Delete(&models.EmailToken{}).Error; err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to refresh email verification state"})
+			return
+		}
+		if user.Email != nil {
+			go createAndSendVerificationToken(user)
+		}
 	}
 
-	c.JSON(http.StatusOK, gin.H{
-		"id":           user.ID,
-		"username":     user.Username,
-		"email":        email,
-		"display_name": user.DisplayName,
-		"avatar_url":   user.AvatarURL,
-		"created_at":   user.CreatedAt,
-	})
+	c.JSON(http.StatusOK, userProfileResponse(user))
+}
+
+func normalizeProfileEmail(raw *string) (*string, error) {
+	if raw == nil {
+		return nil, nil
+	}
+	trimmed := strings.TrimSpace(*raw)
+	if trimmed == "" {
+		return nil, nil
+	}
+	email, ok := normalizeEmail(trimmed)
+	if !ok {
+		return nil, errors.New("invalid email address")
+	}
+	return &email, nil
 }
 
 // ─── API Keys ────────────────────────────────────────────────────────────────

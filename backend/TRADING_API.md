@@ -168,10 +168,14 @@ All `/api/trading/*` endpoints require JWT authentication via `Authorization: Be
 ```bash
 curl -X POST http://localhost:8080/api/auth/login \
   -H "Content-Type: application/json" \
-  -d '{"username": "user", "password": "password"}'
+  -d '{"identifier": "user@example.com", "password": "password"}'
 
 # Response: {"token": "eyJ..."}
 ```
+
+`/api/auth/login` prefers `{ "identifier": "...", "password": "..." }` where
+`identifier` may be an email or a username. Legacy `{ "username": "...", "password": "..." }`
+and `{ "email": "...", "password": "..." }` request bodies are still accepted for migration compatibility.
 
 ### 2. Request Analysis
 ```bash
@@ -244,19 +248,10 @@ curl http://localhost:8080/api/trading/analysis/xyz-789 \
 ## Testing
 
 ```bash
-# 1. Start PostgreSQL & Redis (Docker)
-docker start fingoat-pg fingoat-redis
+# Recommended full-stack startup from repo root
+docker compose up --build
 
-# 2. Start Python service
-cd langchain-v1
-source .venv/bin/activate
-python trading_service.py
-
-# 3. Start Go backend
-cd ../backend
-go run main.go
-
-# 4. Test endpoints
+# Then test endpoints against the compose stack
 # (See examples above)
 ```
 

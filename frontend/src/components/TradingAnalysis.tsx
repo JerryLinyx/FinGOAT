@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { tradingService, type AnalysisTask, type StreamEvent } from '../services/tradingService'
+import type { MarketMode } from '../services/tradingService'
 import { AgentResultsModule } from './AgentResultsModule'
 import '../TradingAnalysis.css'
 
@@ -10,11 +11,22 @@ interface TradingAnalysisProps {
     llmModel: string
     llmBaseUrl?: string
     executionMode: 'default' | 'openclaw'
+    configuredProviders: Set<string>
 }
 
-export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl, executionMode }: TradingAnalysisProps) {
+export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl, executionMode, configuredProviders }: TradingAnalysisProps) {
     const ACTIVE_TASK_STORAGE_KEY = 'fingoat_active_analysis_task_id'
+    const MARKET_STORAGE_KEY = 'fingoat_analysis_market'
+    const readStoredMarket = (): MarketMode => (localStorage.getItem(MARKET_STORAGE_KEY) === 'cn' ? 'cn' : 'us')
+    const sanitizeTicker = (value: string, currentMarket: MarketMode) => (
+        currentMarket === 'cn'
+            ? value.replace(/\D/g, '').slice(0, 6)
+            : value.toUpperCase().replace(/[^A-Z0-9.\-]/g, '').slice(0, 10)
+    )
+    const formatMarketLabel = (value?: MarketMode) => (value === 'cn' ? 'A股' : 'US')
+
     const [ticker, setTicker] = useState('')
+    const [market, setMarket] = useState<MarketMode>(readStoredMarket)
     const [date, setDate] = useState(() => {
         const today = new Date()
         return today.toISOString().split('T')[0]
@@ -167,11 +179,18 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
     }, [openTask])
 
     const handleTickerChange = (e: ChangeEvent<HTMLInputElement>) => {
-        setTicker(e.target.value.toUpperCase())
+        setTicker(sanitizeTicker(e.target.value, market))
     }
 
     const handleDateChange = (e: ChangeEvent<HTMLInputElement>) => {
         setDate(e.target.value)
+    }
+
+    const handleMarketChange = (nextMarket: MarketMode) => {
+        setMarket(nextMarket)
+        localStorage.setItem(MARKET_STORAGE_KEY, nextMarket)
+        setTicker((prev) => sanitizeTicker(prev, nextMarket))
+        setError('')
     }
 
     const [isLaunching, setIsLaunching] = useState(false)
@@ -191,12 +210,27 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         applyTaskState(null)
 
         if (!ticker.trim()) {
-            setError('Please enter a stock ticker')
+            setError(market === 'cn' ? '请输入 6 位 A 股代码' : 'Please enter a stock ticker')
+            setLoading(false)
             return
         }
 
         if (!date) {
             setError('Please select a date')
+            setLoading(false)
+            return
+        }
+
+        if (market === 'cn' && !/^\d{6}$/.test(ticker.trim())) {
+            setError('A股代码必须是 6 位数字')
+            setLoading(false)
+            return
+        }
+
+        // Require Alpha Vantage API key for US market data fetching
+        if (market === 'us' && !configuredProviders.has('alpha_vantage')) {
+            setError('Alpha Vantage API key is required — add it in Profile & API Keys')
+            setLoading(false)
             return
         }
 
@@ -207,6 +241,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         // Duplicate-run guard
         const duplicate = previousAnalyses.find(
             t => t.ticker.toUpperCase() === ticker.toUpperCase() &&
+                 (t.market ?? 'us') === market &&
                  t.analysis_date === date &&
                  (t.status === 'completed' || t.status === 'processing' || t.status === 'pending')
         )
@@ -228,7 +263,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 quick_think_llm: llmModel,
                 deep_think_llm: llmModel,
             }
-            const task = await tradingService.requestAnalysis(ticker.trim(), date, llmConfig, executionMode)
+            const task = await tradingService.requestAnalysis(ticker.trim(), market, date, llmConfig, executionMode)
             applyTaskState(task)
             await pollTask(task.task_id)
         } catch (err) {
@@ -374,7 +409,10 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         return (
             <div className="analysis-result">
                 <div className="result-header">
-                    <h3>{currentTask.ticker}</h3>
+                    <div className="result-header__title">
+                        <h3>{currentTask.ticker}</h3>
+                        <span className="market-badge">{formatMarketLabel(currentTask.market)}</span>
+                    </div>
                     <div className="result-header-actions">
                         <span className="status-badge" style={{ backgroundColor: '#1f2937' }}>
                             {currentTask.execution_mode === 'openclaw' ? 'OPENCLAW' : 'DEFAULT'}
@@ -419,7 +457,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                         <div className="processing-bar">
                             <div className="spinner spinner--sm"></div>
                             <span className="processing-bar__label">
-                                <strong>{currentTask.ticker}</strong> is queued · {lastUpdatedLabel}
+                                <strong>{currentTask.ticker}</strong> · {formatMarketLabel(currentTask.market)} is queued · {lastUpdatedLabel}
                             </span>
                         </div>
                         <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
@@ -431,7 +469,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                         <div className="processing-bar">
                             <div className="spinner spinner--sm"></div>
                             <span className="processing-bar__label">
-                                Analyzing <strong>{currentTask.ticker}</strong>
+                                Analyzing <strong>{currentTask.ticker}</strong> · {formatMarketLabel(currentTask.market)}
                                 {stageStats.activeLabel && <> · {stageStats.activeLabel}</>}
                             </span>
                             <span className="processing-bar__elapsed">⏱ {formatElapsed(currentTask.created_at)}</span>
@@ -499,16 +537,38 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
             <form onSubmit={handleSubmit} className="analysis-form">
                 <div className="form-row">
                     <div className="form-group">
+                        <label>Market</label>
+                        <div className="market-toggle" role="tablist" aria-label="Select market">
+                            <button
+                                type="button"
+                                className={`market-toggle__btn ${market === 'us' ? 'market-toggle__btn--active' : ''}`}
+                                onClick={() => handleMarketChange('us')}
+                                disabled={loading}
+                            >
+                                US
+                            </button>
+                            <button
+                                type="button"
+                                className={`market-toggle__btn ${market === 'cn' ? 'market-toggle__btn--active' : ''}`}
+                                onClick={() => handleMarketChange('cn')}
+                                disabled={loading}
+                            >
+                                A股
+                            </button>
+                        </div>
+                    </div>
+
+                    <div className="form-group">
                         <label htmlFor="ticker">Stock Ticker</label>
                         <input
                             id="ticker"
                             type="text"
-                            placeholder="e.g., NVDA, AAPL, TSLA"
+                            placeholder={market === 'cn' ? '例如 600519, 000001, 300750' : 'e.g., NVDA, AAPL, TSLA'}
                             value={ticker}
                             onChange={handleTickerChange}
                             disabled={loading}
-                            maxLength={10}
-                            style={{ textTransform: 'uppercase' }}
+                            maxLength={market === 'cn' ? 6 : 10}
+                            style={{ textTransform: market === 'cn' ? 'none' : 'uppercase' }}
                         />
                     </div>
 
@@ -561,7 +621,10 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                                 onClick={() => handleSelectRecentAnalysis(task.task_id)}
                             >
                                 <div className="item-header">
-                                    <strong>{task.ticker}</strong>
+                                    <div className="item-header__title">
+                                        <strong>{task.ticker}</strong>
+                                        <span className="market-badge market-badge--inline">{formatMarketLabel(task.market)}</span>
+                                    </div>
                                     <span style={{ color: getStatusColor(task.status), fontSize: '0.85em' }}>
                                         {task.status}
                                     </span>

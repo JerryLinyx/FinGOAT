@@ -74,3 +74,4 @@ db.sqlite3
 .gocache/
 openclaw-gateway/state/
 .claude/
+.run/

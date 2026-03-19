@@ -2,10 +2,24 @@
 
 ## P0
 
-- [ ] Redesign user table for v0.2 account evolution (`email` uniqueness, password hash semantics, profile fields, migration compatibility)
+- [x] Redesign user table for v0.2 account evolution (`email` uniqueness, password hash semantics, profile fields, migration compatibility)
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
-- [ ] Add email-based auth flow (register/login) with backward-compatible migration path for existing username users
+  - Record: `records/2026-03-18-email-registration-module.md`
+- [x] Add email-based auth flow (register/login) with backward-compatible migration path for existing username users
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md`
+  - Record: `records/2026-03-18-email-registration-module.md` (Phase 1: email verification flow)
+- [x] Add email verification Phase 1 (verification token model, SMTP sender, verify endpoint, resend endpoint, frontend reminder banner)
+  - Record: `records/2026-03-18-email-registration-module.md`
+- [x] Allow profile email editing from the frontend account settings
+  - Record: `records/2026-03-18-email-registration-module.md`
+- [x] Reset `email_verified` and trigger a fresh verification flow when a user changes their email address
+  - Record: `records/2026-03-18-review-findings.md`
+- [x] Return `email_verified` in profile responses so the frontend verification banner reflects real state
+  - Record: `records/2026-03-18-review-findings.md`
+- [ ] Email verification Phase 2: password reset + Redis login rate limiting
+  - Record: `records/2026-03-18-email-registration-module.md`
+- [ ] Email verification Phase 3: refresh tokens + session management
+  - Record: `records/2026-03-18-email-registration-module.md`
 - [x] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
   - Record: `records/2026-03-13-v020-kickoff-requirements.md`
   - Record: `records/2026-03-18-deployment-hardening-and-p0-plan.md` (CORS dynamic, port convergence, nginx route removal)
@@ -55,6 +69,18 @@
 
 ## P1
 
+- [x] Add internal observability platform for per-task usage collection, per-user summaries, and admin global usage views
+  - Record: `records/2026-03-18-observability-platform-and-rbac.md`
+- [x] Add first-pass user role model and admin-only route guard
+  - Record: `records/2026-03-18-observability-platform-and-rbac.md`
+- [x] Backfill and normalize legacy user roles so existing accounts default to `user`
+  - Record: `records/2026-03-18-observability-platform-and-rbac.md`
+- [x] Clear persisted usage rows on task resume and re-ingest terminal failed/cancelled task usage when needed
+  - Record: `records/2026-03-18-observability-platform-and-rbac.md`
+- [x] Migrate agent memory from ephemeral ChromaDB to PostgreSQL + pgvector with user isolation and persistence
+  - Record: `records/2026-03-18-pgvector-memory-migration.md`
+- [x] Make pgvector migration capability-gated so non-pgvector PostgreSQL environments degrade gracefully instead of aborting backend startup
+  - Record: `records/2026-03-18-review-findings.md`
 - [x] Add user profile page and backend profile APIs (view/edit basic account information)
   - Record: `records/2026-03-13-user-account-and-byok-requirements.md` (backend + frontend already implemented)
 - [x] Add user API key configuration page and secure backend contracts (provider-scoped key write/update without plaintext echo)
@@ -133,9 +159,18 @@
   - Record: `records/2026-03-13-rss-refresh-deduplication.md`
 - [x] Remove misleading article sentiment tags from the feed UI when no sentiment pipeline exists
   - Record: `records/2026-03-13-rss-refresh-deduplication.md`
+- [x] Fix feed board pagination so reranked pages do not permanently skip items between cursors
+  - Record: `records/2026-03-18-feed-board-review-and-fixes.md`
+- [x] Invalidate feed board cache after preference, like, and save mutations
+  - Record: `records/2026-03-18-feed-board-review-and-fixes.md`
+- [x] Make Feed page unauthorized responses follow the shared session-expiry flow
+  - Record: `records/2026-03-18-feed-board-review-and-fixes.md`
 - [ ] Add vendor fetch deduplication and runtime caching for expensive data calls
 - [x] Migrate ALPHA_VANTAGE_API_KEY from startup env var to per-user DB key (BYOK)
   - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+- [x] Expose `alpha_vantage` in the user API-key list so the new frontend analysis gate is satisfiable
+  - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
+  - Record: `records/2026-03-18-review-findings.md`
 - [x] Inject user LLM API keys server-side so Python never falls back to env vars
   - Record: `records/2026-03-15-provider-keying-and-toolcall-guard.md`
 - [x] Gate API mode provider dropdown by configured keys; clear all API provider model presets

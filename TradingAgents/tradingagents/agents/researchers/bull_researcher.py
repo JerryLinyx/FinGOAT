@@ -3,7 +3,7 @@ import time
 import json
 
 
-def create_bull_researcher(llm, memory):
+def create_bull_researcher(llm, memory, usage_collector=None):
     def bull_node(state) -> dict:
         investment_debate_state = state["investment_debate_state"]
         history = investment_debate_state.get("history", "")
@@ -42,7 +42,10 @@ Reflections from similar situations and lessons learned: {past_memory_str}
 Use this information to deliver a compelling bull argument, refute the bear's concerns, and engage in a dynamic debate that demonstrates the strengths of the bull position. You must also address reflections and learn from lessons and mistakes you made in the past.
 """
 
+        _start = time.time()
         response = llm.invoke(prompt)
+        if usage_collector:
+            usage_collector.record_llm_call("Bull Researcher", response, _start)
 
         argument = f"Bull Analyst: {response.content}"
 

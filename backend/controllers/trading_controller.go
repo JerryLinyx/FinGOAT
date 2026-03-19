@@ -75,6 +75,9 @@ func RequestAnalysis(c *gin.Context) {
 		return
 	}
 
+	req.Market = normalizeMarket(req.Market)
+	req.Ticker = normalizeTickerForMarket(req.Ticker, req.Market)
+
 	// Validate fields (aligned with Python Pydantic constraints)
 	if validationErr := validateAnalysisRequest(&req); validationErr != "" {
 		c.JSON(http.StatusBadRequest, gin.H{"error": validationErr})
@@ -96,6 +99,23 @@ func RequestAnalysis(c *gin.Context) {
 	req.TaskID = taskID
 	req.UserID = userID.(uint)
 	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
+	if req.DataVendorConfig == nil {
+		req.DataVendorConfig = defaultDataVendorConfigForMarket(req.Market)
+	} else {
+		defaults := defaultDataVendorConfigForMarket(req.Market)
+		if req.DataVendorConfig.CoreStockAPIs == "" {
+			req.DataVendorConfig.CoreStockAPIs = defaults.CoreStockAPIs
+		}
+		if req.DataVendorConfig.TechnicalIndicators == "" {
+			req.DataVendorConfig.TechnicalIndicators = defaults.TechnicalIndicators
+		}
+		if req.DataVendorConfig.FundamentalData == "" {
+			req.DataVendorConfig.FundamentalData = defaults.FundamentalData
+		}
+		if req.DataVendorConfig.NewsData == "" {
+			req.DataVendorConfig.NewsData = defaults.NewsData
+		}
+	}
 
 	var llmProvider, llmModel, llmBaseURL string
 	if req.LLMConfig != nil {
@@ -124,13 +144,21 @@ func RequestAnalysis(c *gin.Context) {
 		}
 	}
 
-	// Inject Alpha Vantage key (may be empty — Python falls back to env var).
-	avKey, avErr := lookupDecryptedKey(userID.(uint), "alpha_vantage")
-	if avErr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve alpha vantage key"})
-		return
+	if req.Market == "us" {
+		// Inject Alpha Vantage key — still required for US analysis runs.
+		avKey, avErr := lookupDecryptedKey(userID.(uint), "alpha_vantage")
+		if avErr != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve alpha vantage key"})
+			return
+		}
+		if avKey == "" {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"error": "no Alpha Vantage API key configured — add it in Profile & API Keys",
+			})
+			return
+		}
+		req.AlphaVantageAPIKey = avKey
 	}
-	req.AlphaVantageAPIKey = avKey
 
 	configJSON, err := marshalTaskConfig(&req)
 	if err != nil {
@@ -140,16 +168,17 @@ func RequestAnalysis(c *gin.Context) {
 
 	// Create database record
 	task := models.TradingAnalysisTask{
-		UserID:       userID.(uint),
-		TaskID:       taskID,
-		Ticker:       req.Ticker,
-		AnalysisDate: req.Date,
-		Status:       "pending",
+		UserID:        userID.(uint),
+		TaskID:        taskID,
+		Ticker:        req.Ticker,
+		Market:        req.Market,
+		AnalysisDate:  req.Date,
+		Status:        "pending",
 		ExecutionMode: req.ExecutionMode,
-		Config:       configJSON,
-		LLMProvider:  llmProvider,
-		LLMModel:     llmModel,
-		LLMBaseURL:   llmBaseURL,
+		Config:        configJSON,
+		LLMProvider:   llmProvider,
+		LLMModel:      llmModel,
+		LLMBaseURL:    llmBaseURL,
 	}
 
 	ctx := c.Request.Context()
@@ -160,12 +189,13 @@ func RequestAnalysis(c *gin.Context) {
 	}
 
 	runtime := &RuntimeTaskState{
-		TaskID:    taskID,
-		Status:    "pending",
-		Ticker:    req.Ticker,
-		Date:      req.Date,
+		TaskID:        taskID,
+		Status:        "pending",
+		Ticker:        req.Ticker,
+		Market:        req.Market,
+		Date:          req.Date,
 		ExecutionMode: req.ExecutionMode,
-		CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339),
+		CreatedAt:     task.CreatedAt.UTC().Format(time.RFC3339),
 	}
 
 	if err := saveRuntimeState(ctx, runtime); err != nil {
@@ -215,6 +245,10 @@ func GetAnalysisResult(c *gin.Context) {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync task state: " + err.Error()})
 			return
 		}
+	}
+	if err := EnsureTaskUsageIngested(c.Request.Context(), &task); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync task usage: " + err.Error()})
+		return
 	}
 
 	c.JSON(http.StatusOK, buildAnalysisTaskResponse(&task, runtime))
@@ -308,6 +342,10 @@ func ListUserAnalyses(c *gin.Context) {
 		var runtime *RuntimeTaskState
 		if tasks[i].Status == "pending" || tasks[i].Status == "processing" {
 			runtime, _ = reconcileTaskRuntime(c.Request.Context(), &tasks[i])
+		}
+		if err := EnsureTaskUsageIngested(c.Request.Context(), &tasks[i]); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to sync task usage: " + err.Error()})
+			return
 		}
 		responses = append(responses, buildAnalysisTaskResponse(&tasks[i], runtime))
 	}
@@ -406,8 +444,8 @@ func CheckServiceHealth(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"status":          "healthy",
-		"trading_service": healthResp,
+		"status":           "healthy",
+		"trading_service":  healthResp,
 		"openclaw_gateway": openclawHealth,
 	})
 }
@@ -443,12 +481,13 @@ func CancelAnalysis(c *gin.Context) {
 	}
 	if runtime == nil {
 		runtime = &RuntimeTaskState{
-			TaskID:    task.TaskID,
-			Status:    "cancelled",
-			Ticker:    task.Ticker,
-			Date:      task.AnalysisDate,
+			TaskID:        task.TaskID,
+			Status:        "cancelled",
+			Ticker:        task.Ticker,
+			Market:        normalizeMarket(task.Market),
+			Date:          task.AnalysisDate,
 			ExecutionMode: normalizeExecutionMode(task.ExecutionMode),
-			CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339),
+			CreatedAt:     task.CreatedAt.UTC().Format(time.RFC3339),
 		}
 	}
 
@@ -509,6 +548,7 @@ func ResumeAnalysis(c *gin.Context) {
 	req.TaskID = task.TaskID
 	req.UserID = task.UserID
 	req.Ticker = task.Ticker
+	req.Market = normalizeMarket(task.Market)
 	req.Date = task.AnalysisDate
 	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
 
@@ -527,16 +567,21 @@ func ResumeAnalysis(c *gin.Context) {
 
 	ctx := c.Request.Context()
 	runtime := &RuntimeTaskState{
-		TaskID:    task.TaskID,
-		Status:    "pending",
-		Ticker:    task.Ticker,
-		Date:      task.AnalysisDate,
+		TaskID:        task.TaskID,
+		Status:        "pending",
+		Ticker:        task.Ticker,
+		Market:        normalizeMarket(task.Market),
+		Date:          task.AnalysisDate,
 		ExecutionMode: req.ExecutionMode,
-		CreatedAt: task.CreatedAt.UTC().Format(time.RFC3339),
+		CreatedAt:     task.CreatedAt.UTC().Format(time.RFC3339),
 	}
 
 	if err := saveRuntimeState(ctx, runtime); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to reset runtime state: " + err.Error()})
+		return
+	}
+	if err := ClearTaskUsage(ctx, task.TaskID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to clear stale usage before resume: " + err.Error()})
 		return
 	}
 	if err := removeAnalysisPayloadsFromQueues(ctx, task.TaskID); err != nil {

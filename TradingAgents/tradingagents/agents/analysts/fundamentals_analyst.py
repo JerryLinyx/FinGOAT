@@ -3,9 +3,10 @@ import time
 import json
 from tradingagents.agents.utils.agent_utils import get_fundamentals, get_balance_sheet, get_cashflow, get_income_statement, get_insider_sentiment, get_insider_transactions
 from tradingagents.dataflows.config import get_config
+from tradingagents.graph.conditional_logic import sanitize_orphan_tool_calls
 
 
-def create_fundamentals_analyst(llm):
+def create_fundamentals_analyst(llm, usage_collector=None):
     def fundamentals_analyst_node(state):
         current_date = state["trade_date"]
         ticker = state["company_of_interest"]
@@ -53,7 +54,10 @@ def create_fundamentals_analyst(llm):
             chain = prompt | llm
             tool_capable = False
 
-        result = chain.invoke(state["messages"])
+        _start = time.time()
+        result = chain.invoke(sanitize_orphan_tool_calls(state["messages"]))
+        if usage_collector:
+            usage_collector.record_llm_call("Fundamentals Analyst", result, _start)
 
         report = ""
 

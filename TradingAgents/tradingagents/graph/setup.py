@@ -79,9 +79,11 @@ class GraphSetup:
 
             return node
 
+        _collector = self.config.get("usage_collector")
+
         if "market" in selected_analysts:
             analyst_nodes["market"] = create_market_analyst(
-                self.quick_thinking_llm
+                self.quick_thinking_llm, usage_collector=_collector
             )
             if analyst_backend("market") == "openclaw":
                 analyst_nodes["market"] = build_openclaw_node("market")
@@ -90,7 +92,7 @@ class GraphSetup:
 
         if "social" in selected_analysts:
             analyst_nodes["social"] = create_social_media_analyst(
-                self.quick_thinking_llm
+                self.quick_thinking_llm, usage_collector=_collector
             )
             if analyst_backend("social") == "openclaw":
                 analyst_nodes["social"] = build_openclaw_node("social")
@@ -99,7 +101,7 @@ class GraphSetup:
 
         if "news" in selected_analysts:
             analyst_nodes["news"] = create_news_analyst(
-                self.quick_thinking_llm
+                self.quick_thinking_llm, usage_collector=_collector
             )
             if analyst_backend("news") == "openclaw":
                 analyst_nodes["news"] = build_openclaw_node("news")
@@ -108,7 +110,7 @@ class GraphSetup:
 
         if "fundamentals" in selected_analysts:
             analyst_nodes["fundamentals"] = create_fundamentals_analyst(
-                self.quick_thinking_llm
+                self.quick_thinking_llm, usage_collector=_collector
             )
             if analyst_backend("fundamentals") == "openclaw":
                 analyst_nodes["fundamentals"] = build_openclaw_node("fundamentals")
@@ -117,22 +119,22 @@ class GraphSetup:
 
         # Create researcher and manager nodes
         bull_researcher_node = create_bull_researcher(
-            self.quick_thinking_llm, self.bull_memory
+            self.quick_thinking_llm, self.bull_memory, usage_collector=_collector
         )
         bear_researcher_node = create_bear_researcher(
-            self.quick_thinking_llm, self.bear_memory
+            self.quick_thinking_llm, self.bear_memory, usage_collector=_collector
         )
         research_manager_node = create_research_manager(
-            self.deep_thinking_llm, self.invest_judge_memory
+            self.deep_thinking_llm, self.invest_judge_memory, usage_collector=_collector
         )
-        trader_node = create_trader(self.quick_thinking_llm, self.trader_memory)
+        trader_node = create_trader(self.quick_thinking_llm, self.trader_memory, usage_collector=_collector)
 
         # Create risk analysis nodes
-        risky_analyst = create_risky_debator(self.quick_thinking_llm)
-        neutral_analyst = create_neutral_debator(self.quick_thinking_llm)
-        safe_analyst = create_safe_debator(self.quick_thinking_llm)
+        risky_analyst = create_risky_debator(self.quick_thinking_llm, usage_collector=_collector)
+        neutral_analyst = create_neutral_debator(self.quick_thinking_llm, usage_collector=_collector)
+        safe_analyst = create_safe_debator(self.quick_thinking_llm, usage_collector=_collector)
         risk_manager_node = create_risk_manager(
-            self.deep_thinking_llm, self.risk_manager_memory
+            self.deep_thinking_llm, self.risk_manager_memory, usage_collector=_collector
         )
 
         # Create workflow

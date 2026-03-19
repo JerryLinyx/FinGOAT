@@ -2,7 +2,7 @@ import time
 import json
 
 
-def create_research_manager(llm, memory):
+def create_research_manager(llm, memory, usage_collector=None):
     def research_manager_node(state) -> dict:
         history = state["investment_debate_state"].get("history", "")
         market_research_report = state["market_report"]
@@ -36,7 +36,10 @@ Here are your past reflections on mistakes:
 Here is the debate:
 Debate History:
 {history}"""
+        _start = time.time()
         response = llm.invoke(prompt)
+        if usage_collector:
+            usage_collector.record_llm_call("Research Manager", response, _start)
 
         new_investment_debate_state = {
             "judge_decision": response.content,

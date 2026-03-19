@@ -12,6 +12,7 @@ type TradingAnalysisTask struct {
 	UserID                uint       `gorm:"not null;index" json:"user_id"`
 	TaskID                string     `gorm:"type:varchar(100);unique;not null;index" json:"task_id"`
 	Ticker                string     `gorm:"type:varchar(10);not null" json:"ticker"`
+	Market                string     `gorm:"type:varchar(10);not null;default:'us'" json:"market"`
 	AnalysisDate          string     `gorm:"type:varchar(20);not null" json:"analysis_date"`
 	Status                string     `gorm:"type:varchar(20);not null" json:"status"` // pending/processing/completed/failed
 	ExecutionMode         string     `gorm:"type:varchar(20);not null;default:'default'" json:"execution_mode"`

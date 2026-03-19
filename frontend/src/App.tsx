@@ -14,7 +14,9 @@ import { ChartPage } from './components/ChartPage'
 import { OpenClawPage } from './components/OpenClawPage'
 import { FeedPage } from './components/FeedPage'
 import { ProfilePage } from './components/ProfilePage'
-import { getProfile, getAPIKeys } from './services/userService'
+import { UsagePage } from './components/UsagePage'
+import { AdminDashboard } from './components/AdminDashboard'
+import { getProfile, getAPIKeys, resendVerification } from './services/userService'
 import { tradingService, type OllamaModel } from './services/tradingService'
 import type { UserProfile } from './types/user'
 
@@ -23,7 +25,7 @@ type View = 'auth' | 'home'
 type Theme = 'light' | 'dark'
 type CollapsiblePanel = 'config'
 type DragPanel = 'config' | null
-type ActiveTab = 'dashboard' | 'feed' | 'chart' | 'openclaw'
+type ActiveTab = 'dashboard' | 'feed' | 'chart' | 'openclaw' | 'usage' | 'admin'
 type ExecutionMode = 'api' | 'ollama' | 'openclaw'
 type OpenClawStatus = 'disconnected' | 'connecting' | 'connected'
 type RoleBindings = Record<'market' | 'social' | 'news' | 'fundamentals', string>
@@ -210,6 +212,9 @@ function App() {
   const [showProfile, setShowProfile] = useState(false)
   const [showUserMenu, setShowUserMenu] = useState(false)
   const userMenuRef = useRef<HTMLDivElement | null>(null)
+  const [verificationBannerDismissed, setVerificationBannerDismissed] = useState(false)
+  const [resendingVerification, setResendingVerification] = useState(false)
+  const [resendVerificationMsg, setResendVerificationMsg] = useState('')
 
   useEffect(() => {
     localStorage.setItem('fingoat_theme', theme)
@@ -404,6 +409,19 @@ function App() {
 
   const handleLogout = () => {
     resetSession()
+  }
+
+  const handleResendVerification = async () => {
+    setResendingVerification(true)
+    setResendVerificationMsg('')
+    try {
+      await resendVerification()
+      setResendVerificationMsg('Verification email sent! Check your inbox.')
+    } catch (err) {
+      setResendVerificationMsg(err instanceof Error ? err.message : 'Failed to send email')
+    } finally {
+      setResendingVerification(false)
+    }
   }
 
   const togglePasswordVisibility = () => {
@@ -604,6 +622,59 @@ function App() {
 
   const dashboardView = (
     <div className="dashboard">
+      {currentUser?.email && currentUser.email_verified === false && !verificationBannerDismissed && (
+        <div style={{
+          background: '#fef3c7',
+          borderBottom: '1px solid #fcd34d',
+          padding: '8px 16px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          fontSize: '13px',
+          color: '#92400e',
+          flexShrink: 0,
+        }}>
+          <span>⚠️</span>
+          <span>Please verify your email address (<strong>{currentUser.email}</strong>).</span>
+          <button
+            onClick={handleResendVerification}
+            disabled={resendingVerification}
+            style={{
+              background: 'none',
+              border: '1px solid #d97706',
+              borderRadius: '4px',
+              padding: '2px 10px',
+              cursor: 'pointer',
+              color: '#92400e',
+              fontSize: '12px',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {resendingVerification ? 'Sending...' : 'Resend email'}
+          </button>
+          {resendVerificationMsg && (
+            <span style={{ color: resendVerificationMsg.includes('sent') ? '#065f46' : '#dc2626' }}>
+              {resendVerificationMsg}
+            </span>
+          )}
+          <button
+            onClick={() => setVerificationBannerDismissed(true)}
+            style={{
+              marginLeft: 'auto',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              color: '#92400e',
+              fontSize: '16px',
+              lineHeight: 1,
+              padding: '0 4px',
+            }}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {/* Profile overlay — rendered on top of everything when open */}
       {showProfile && (
         <ProfilePage
@@ -649,6 +720,22 @@ function App() {
           >
             OpenClaw
           </button>
+          <button
+            type="button"
+            className={`nav-tab ${activeTab === 'usage' ? 'nav-tab--active' : ''}`}
+            onClick={() => setActiveTab('usage')}
+          >
+            Usage
+          </button>
+	          {currentUser?.role === 'admin' && (
+            <button
+              type="button"
+              className={`nav-tab ${activeTab === 'admin' ? 'nav-tab--active' : ''}`}
+              onClick={() => setActiveTab('admin')}
+            >
+              Admin
+            </button>
+          )}
         </nav>
         <div className="nav-actions">
           <ThemeToggleButton />
@@ -712,6 +799,10 @@ function App() {
           onStatusChange={setOpenclawStatus}
           onBindingsChange={(b) => setOpenclawBindings(b as RoleBindings)}
         />
+      ) : activeTab === 'usage' ? (
+        <UsagePage />
+      ) : activeTab === 'admin' ? (
+        <AdminDashboard />
       ) : (
       <main
         ref={dashboardGridRef}
@@ -990,6 +1081,7 @@ function App() {
               llmModel={llmModel}
               llmBaseUrl={llmBaseUrl}
               executionMode={executionMode === 'openclaw' ? 'openclaw' : 'default'}
+              configuredProviders={configuredProviders}
             />
           </div>
         </section>

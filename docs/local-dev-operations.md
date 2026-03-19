@@ -1,117 +1,76 @@
 # Local Dev Operations
 
-## Start Commands
+## Default Startup
 
-### Stateful services
-
-Start PostgreSQL:
+Start the full stack from the repository root:
 
 ```bash
-docker start fingoat-pg
+docker compose up --build
 ```
 
-Start Redis:
+This is the default local development path. It builds and starts nginx, frontend, backend, trading service, PostgreSQL, and Redis together.
+
+To run in the background:
 
 ```bash
-docker start fingoat-redis
-```
-
-### Backend
-
-Start the Go backend from [backend](/Users/linyuxuan/workSpace/FinGOAT/backend):
-
-```bash
-/bin/zsh -lc 'JWT_SECRET=dev-jwt-secret BYOK_ENCRYPTION_KEY=txtTm8zhoJiVIORkqMJtpGpTWRn6n97Q7nhrcoOugYw= ALPHA_VANTAGE_API_KEY=H0GNP3632K0DHMZZ go run .'
-```
-
-### Trading Service
-
-Start the Python trading service from [langchain-v1](/Users/linyuxuan/workSpace/FinGOAT/langchain-v1):
-
-```bash
-/bin/zsh -lc 'ALPHA_VANTAGE_API_KEY=H0GNP3632K0DHMZZ ./.venv/bin/uvicorn trading_service:app --host 0.0.0.0 --port 8001'
-```
-
-### Frontend
-
-Start the Vite dev server from [frontend](/Users/linyuxuan/workSpace/FinGOAT/frontend):
-
-```bash
-npm run dev
+docker compose up -d --build
 ```
 
 ## Stop Commands
 
-### Backend
-
-Find the PID listening on port `3000`:
+Stop the compose stack:
 
 ```bash
-lsof -ti tcp:3000
+docker compose down
 ```
 
-Stop it:
+Stop the compose stack and remove volumes:
 
 ```bash
-kill <PID>
+docker compose down -v
 ```
 
-### Trading Service
+## Logs
 
-Find the PID listening on port `8001`:
+Tail all services:
 
 ```bash
-lsof -ti tcp:8001
+docker compose logs -f
 ```
 
-Stop it:
+Tail a single service:
 
 ```bash
-kill <PID>
+docker compose logs -f backend
 ```
 
-### Frontend
+Useful service names:
 
-Find the PID listening on port `5173`:
-
-```bash
-lsof -ti tcp:5173
-```
-
-Stop it:
-
-```bash
-kill <PID>
-```
-
-### Stateful services
-
-Stop PostgreSQL:
-
-```bash
-docker stop fingoat-pg
-```
-
-Stop Redis:
-
-```bash
-docker stop fingoat-redis
-```
+- `nginx`
+- `frontend`
+- `backend`
+- `trading-service`
+- `postgres`
+- `redis`
 
 ## Health Checks
 
-Backend:
+App entry:
+
+Open [http://localhost](http://localhost).
+
+Go backend:
 
 ```bash
-curl -s http://localhost:3000/api/health
+curl -s http://localhost/api/health
 ```
 
-Trading service:
+Trading service via Go gateway:
 
 ```bash
-curl -s http://localhost:8001/health
+curl -s http://localhost/api/trading/health
 ```
 
-Frontend:
+## Component-Only Debugging
 
-Open [http://localhost:5173/](http://localhost:5173/).
+Manual per-service startup is now an exception path for isolated debugging only. The source of truth for local startup is still root-level `docker compose up --build`.

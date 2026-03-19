@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/JerryLinyx/FinGOAT/config"
+	"github.com/JerryLinyx/FinGOAT/controllers"
 	"github.com/JerryLinyx/FinGOAT/router"
 )
 
@@ -28,6 +29,10 @@ func main() {
 		Handler: r,
 	}
 
+	lifecycleCtx, lifecycleCancel := context.WithCancel(context.Background())
+	defer lifecycleCancel()
+	controllers.StartFeedScheduler(lifecycleCtx)
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("listen: %s\n", err)
@@ -38,6 +43,7 @@ func main() {
 	signal.Notify(quit, os.Interrupt)
 	<-quit
 	log.Println("Shutdown Server ...")
+	lifecycleCancel()
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

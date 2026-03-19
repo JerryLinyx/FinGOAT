@@ -1786,3 +1786,110 @@
 
 .oc-role-badge--bound   { background: rgba(34,197,94,0.15); color: #16a34a; }
 .oc-role-badge--unbound { background: var(--surface-alt, rgba(0,0,0,0.05)); color: var(--text-muted, #aaa); }
+
+/* ── Usage & Admin pages ──────────────────────────────────────────────────── */
+
+.usage-page,
+.admin-dashboard {
+  padding: 1.5rem;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.usage-page__title,
+.admin-dashboard__title {
+  font-size: 1.4rem;
+  font-weight: 600;
+  margin-bottom: 1.2rem;
+}
+
+.usage-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+
+.usage-kpi-card {
+  background: var(--surface-alt, rgba(0,0,0,0.03));
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: 10px;
+  padding: 1rem 1.2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.usage-kpi-card__label {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted, #888);
+}
+
+.usage-kpi-card__value {
+  font-size: 1.6rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-section {
+  margin-top: 1.5rem;
+}
+
+.usage-section__heading {
+  font-size: 1rem;
+  font-weight: 600;
+  margin-bottom: 0.8rem;
+}
+
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.usage-table th,
+.usage-table td {
+  text-align: left;
+  padding: 0.6rem 0.8rem;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+}
+
+.usage-table th {
+  font-weight: 600;
+  color: var(--text-muted, #888);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.usage-table td {
+  font-variant-numeric: tabular-nums;
+}
+
+.usage-page__empty {
+  color: var(--text-muted, #888);
+  text-align: center;
+  padding: 2rem 0;
+}
+
+.role-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.role-badge--admin {
+  background: rgba(234,179,8,0.15);
+  color: #ca8a04;
+}
+
+.role-badge--user {
+  background: rgba(59,130,246,0.12);
+  color: #2563eb;
+}

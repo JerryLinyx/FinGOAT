@@ -15,6 +15,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   deepseek: 'DeepSeek',
   dashscope: 'DashScope',
   aliyun: 'DashScope',
+  alpha_vantage: 'Alpha Vantage (data)',
 }
 
 // ─── API Key row ────────────────────────────────────────────────────────────
@@ -187,6 +188,7 @@ export function ProfilePage({ initialProfile, onClose, onProfileUpdate }: Profil
 
   // Account form state
   const [displayName, setDisplayName] = useState(initialProfile?.display_name ?? '')
+  const [email, setEmail] = useState(initialProfile?.email ?? '')
   const [avatarUrl, setAvatarUrl] = useState(initialProfile?.avatar_url ?? '')
   const [profileSaving, setProfileSaving] = useState(false)
   const [profileMsg, setProfileMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
@@ -216,9 +218,11 @@ export function ProfilePage({ initialProfile, onClose, onProfileUpdate }: Profil
     try {
       const updated = await userService.updateProfile({
         display_name: displayName,
+        email,
         avatar_url: avatarUrl,
       })
       setProfile(updated)
+      setEmail(updated.email ?? '')
       onProfileUpdate(updated)
       setProfileMsg({ type: 'success', text: 'Profile updated.' })
     } catch (err) {
@@ -299,11 +303,11 @@ export function ProfilePage({ initialProfile, onClose, onProfileUpdate }: Profil
                 <input
                   id="pf-email"
                   type="email"
-                  className="profile-field__input profile-field__input--readonly"
-                  value={profile?.email ?? ''}
-                  readOnly
-                  placeholder="No email set"
-                  title="Email cannot be changed here"
+                  className="profile-field__input"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  placeholder="you@example.com"
+                  autoComplete="email"
                 />
               </div>
 

@@ -53,6 +53,7 @@ func InitRouter() *gin.Engine {
 	{
 		auth.POST("/login", controllers.Login)
 		auth.POST("/register", controllers.Register)
+		auth.GET("/verify-email", controllers.VerifyEmail)
 	}
 
 	api := r.Group("/api")
@@ -69,6 +70,16 @@ func InitRouter() *gin.Engine {
 		api.POST("/articles/:id/like", controllers.LikeArticle)
 		api.GET("/articles/:id/like", controllers.GetArticleLikes)
 
+		feed := api.Group("/feed")
+		{
+			feed.GET("", controllers.GetFeed)
+			feed.GET("/sources", controllers.GetFeedSources)
+			feed.GET("/preferences", controllers.GetFeedPreferences)
+			feed.PUT("/preferences", controllers.PutFeedPreferences)
+			feed.POST("/items/:id/like", controllers.ToggleFeedLike)
+			feed.POST("/items/:id/save", controllers.ToggleFeedSave)
+		}
+
 		// User profile and API key routes
 		user := api.Group("/user")
 		{
@@ -77,6 +88,7 @@ func InitRouter() *gin.Engine {
 			user.GET("/api-keys", controllers.GetAPIKeys)
 			user.PUT("/api-keys/:provider", controllers.UpsertAPIKey)
 			user.DELETE("/api-keys/:provider", controllers.DeleteAPIKey)
+			user.POST("/resend-verification", controllers.ResendVerification)
 		}
 
 		// Trading analysis routes
@@ -91,7 +103,24 @@ func InitRouter() *gin.Engine {
 			trading.GET("/stats", controllers.GetAnalysisStats)
 			trading.GET("/health", controllers.CheckServiceHealth)
 			trading.GET("/chart/:ticker", controllers.GetStockChart)
+			trading.GET("/terminal/:ticker", controllers.GetStockTerminal)
+			trading.GET("/quote/:ticker", controllers.GetStockQuote)
 			trading.GET("/ollama/models", controllers.GetOllamaModels)
+		}
+
+		// Usage data routes (user self-service)
+		usage := api.Group("/usage")
+		{
+			usage.GET("/summary", controllers.GetUsageSummary)
+			usage.GET("/tasks/:task_id", controllers.GetTaskUsageDetail)
+		}
+
+		// Admin-only routes
+		admin := api.Group("/admin")
+		admin.Use(middlewares.RequireAdmin())
+		{
+			admin.GET("/usage/summary", controllers.GetAdminUsageSummary)
+			admin.GET("/usage/users", controllers.GetAdminUserUsage)
 		}
 	}
 

@@ -2,7 +2,7 @@ import time
 import json
 
 
-def create_risky_debator(llm):
+def create_risky_debator(llm, usage_collector=None):
     def risky_node(state) -> dict:
         risk_debate_state = state["risk_debate_state"]
         history = risk_debate_state.get("history", "")
@@ -32,7 +32,10 @@ Here is the current conversation history: {history} Here are the last arguments 
 
 Engage actively by addressing any specific concerns raised, refuting the weaknesses in their logic, and asserting the benefits of risk-taking to outpace market norms. Maintain a focus on debating and persuading, not just presenting data. Challenge each counterpoint to underscore why a high-risk approach is optimal. Output conversationally as if you are speaking without any special formatting."""
 
+        _start = time.time()
         response = llm.invoke(prompt)
+        if usage_collector:
+            usage_collector.record_llm_call("Risky Analyst", response, _start)
 
         argument = f"Risky Analyst: {response.content}"
 

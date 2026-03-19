@@ -1,235 +1,490 @@
-import { useState, useEffect } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import './FeedPage.css'
-
-export const VITE_API_URL = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-const TOKEN_STORAGE_KEY = 'fingoat_token'
-
-const getAuthHeader = () => {
-  const token = localStorage.getItem(TOKEN_STORAGE_KEY)
-  if (!token) {
-    return ''
-  }
-  return token.startsWith('Bearer ') ? token : `Bearer ${token}`
-}
-
-export interface Article {
-  id: number
-  title: string
-  source: string
-  preview: string
-  content: string
-  link?: string
-  publishedAt?: string
-  createdAt: string
-}
-
-type ArticleApiRecord = Partial<Article> & {
-  ID?: number
-  Title?: string
-  Source?: string
-  Preview?: string
-  Content?: string
-  Link?: string
-  PublishedAt?: string
-  CreatedAt?: string
-}
+import {
+  feedService,
+  type FeedItem,
+  type FeedPreferences,
+  type FeedSource,
+  type FeedTab,
+} from '../services/feedService'
 
 interface FeedPageProps {
   onSessionExpired: (msg?: string) => void
 }
 
+const BOARD_TABS: Array<{ key: FeedTab; label: string; eyebrow: string }> = [
+  { key: 'for-you', label: 'For You', eyebrow: 'Personalized board' },
+  { key: 'following', label: 'Following', eyebrow: 'Your watchlist' },
+  { key: 'ai', label: 'AI', eyebrow: 'Model and infra pulse' },
+  { key: 'macro', label: 'Macro', eyebrow: 'Policy and rates' },
+  { key: 'earnings', label: 'Earnings', eyebrow: 'Guidance and quarters' },
+  { key: 'stocks', label: 'Stocks', eyebrow: 'Signals with tickers' },
+  { key: 'saved', label: 'Saved', eyebrow: 'Your library' },
+]
+
+const EMPTY_PREFERENCES: FeedPreferences = {
+  topics: [],
+  tickers: [],
+  sources: [],
+}
+
+function parseCommaSeparated(value: string): string[] {
+  return value
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+}
+
+function formatDate(value?: string) {
+  if (!value) return 'Freshly surfaced'
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Freshly surfaced'
+  return new Intl.DateTimeFormat(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  }).format(parsed)
+}
+
+function FeedCardSkeleton() {
+  return (
+    <article className="signal-card signal-card--skeleton" aria-hidden="true">
+      <div className="signal-card__cover signal-card__cover--skeleton" />
+      <div className="signal-card__body">
+        <div className="signal-card__line signal-card__line--short" />
+        <div className="signal-card__line" />
+        <div className="signal-card__line signal-card__line--medium" />
+      </div>
+    </article>
+  )
+}
+
+function coverFallbackLabel(item: FeedItem) {
+  if (item.primary_ticker) return item.primary_ticker
+  if (item.primary_topic) return item.primary_topic.slice(0, 6).toUpperCase()
+  return item.source_name.slice(0, 2).toUpperCase()
+}
+
 export function FeedPage({ onSessionExpired }: FeedPageProps) {
-  const [articles, setArticles] = useState<Article[]>([])
-  const [articlesLoading, setArticlesLoading] = useState(false)
-  const [articlesError, setArticlesError] = useState('')
-  const [expandedArticles, setExpandedArticles] = useState<Record<number, boolean>>({})
-  const [articleLikes, setArticleLikes] = useState<Record<number, number>>({})
-  const [likingArticle, setLikingArticle] = useState<Record<number, boolean>>({})
+  const [activeTab, setActiveTab] = useState<FeedTab>('for-you')
+  const [sourceFilter, setSourceFilter] = useState('all')
+  const [items, setItems] = useState<FeedItem[]>([])
+  const [nextCursor, setNextCursor] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const [error, setError] = useState('')
+  const [sources, setSources] = useState<FeedSource[]>([])
+  const [preferences, setPreferences] = useState<FeedPreferences>(EMPTY_PREFERENCES)
+  const [draftTopics, setDraftTopics] = useState('')
+  const [draftTickers, setDraftTickers] = useState('')
+  const [draftSources, setDraftSources] = useState<string[]>([])
+  const [preferencesOpen, setPreferencesOpen] = useState(false)
+  const [preferencesSaving, setPreferencesSaving] = useState(false)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
-  const fetchArticleLikes = async (articleId: number, token: string) => {
-    try {
-      const resp = await fetch(`${VITE_API_URL}/api/articles/${articleId}/like`, {
-        headers: { Authorization: token },
-      })
-      if (resp.ok) {
-        const data = await resp.json()
-        setArticleLikes((prev) => ({ ...prev, [articleId]: data.likes }))
-      }
-    } catch (err) {
-      console.error(`Failed to fetch likes for article ${articleId}`, err)
+  const selectedTabMeta = useMemo(
+    () => BOARD_TABS.find((tab) => tab.key === activeTab) ?? BOARD_TABS[0],
+    [activeTab],
+  )
+
+  const handleError = (err: unknown, fallback: string) => {
+    const message = err instanceof Error ? err.message : fallback
+    const status =
+      typeof err === 'object' && err !== null && 'status' in err
+        ? Number((err as { status?: unknown }).status)
+        : undefined
+    setError(message)
+    if (status === 401 || message.toLowerCase().includes('unauthorized') || message.includes('401')) {
+      onSessionExpired(message)
     }
   }
 
-  const normalizeArticle = (record: ArticleApiRecord): Article => ({
-    id: record.id ?? record.ID ?? 0,
-    title: record.title ?? record.Title ?? '',
-    source: record.source ?? record.Source ?? '',
-    preview: record.preview ?? record.Preview ?? '',
-    content: record.content ?? record.Content ?? '',
-    link: record.link ?? record.Link,
-    publishedAt: record.publishedAt ?? record.PublishedAt,
-    createdAt: record.createdAt ?? record.CreatedAt ?? '',
-  })
+  const syncPreferencesDraft = (value: FeedPreferences) => {
+    setPreferences(value)
+    setDraftTopics(value.topics.join(', '))
+    setDraftTickers(value.tickers.join(', '))
+    setDraftSources(value.sources)
+  }
 
-  const fetchArticles = async (options?: { refresh?: boolean }) => {
-    if (articlesLoading) return
-    const token = getAuthHeader()
-    if (!token) return
+  const loadBoard = async (reset = false) => {
+    const next = reset ? '' : nextCursor
+    if (reset) {
+      setLoading(true)
+      setError('')
+    } else {
+      setLoadingMore(true)
+    }
 
-    setArticlesLoading(true)
-    setArticlesError('')
     try {
-      const url = new URL(`${VITE_API_URL}/api/articles`)
-      if (options?.refresh) {
-        url.searchParams.set('refresh', 'true')
-      }
-
-      const resp = await fetch(url.toString(), {
-        headers: { Authorization: token },
+      const response = await feedService.getBoard({
+        tab: activeTab,
+        source: sourceFilter,
+        cursor: next || undefined,
+        limit: 24,
       })
-
-      if (resp.status === 401) {
-        onSessionExpired()
-        return
-      }
-
-      const data = await resp.json()
-      if (resp.ok) {
-        const normalized = Array.isArray(data)
-          ? data.map((article) => normalizeArticle(article as ArticleApiRecord))
-          : []
-        setArticles(normalized)
-        normalized.forEach((article) => {
-          fetchArticleLikes(article.id, token)
+      setItems((prev) => {
+        if (reset) return response.items
+        const seen = new Set(prev.map((item) => item.id))
+        const merged = [...prev]
+        response.items.forEach((item) => {
+          if (!seen.has(item.id)) {
+            merged.push(item)
+          }
         })
-      } else {
-        setArticlesError(data.error || 'Failed to fetch articles')
-      }
-    } catch (err) {
-      console.error(err)
-      setArticlesError('Network error checking articles.')
-    } finally {
-      setArticlesLoading(false)
-    }
-  }
-
-  const handleLikeArticle = async (articleId: number) => {
-    const token = getAuthHeader()
-    if (!token) return
-
-    setLikingArticle((prev) => ({ ...prev, [articleId]: true }))
-    try {
-      const resp = await fetch(`${VITE_API_URL}/api/articles/${articleId}/like`, {
-        method: 'POST',
-        headers: { Authorization: token },
+        return merged
       })
-      if (resp.status === 401) {
-        onSessionExpired()
-        return
-      }
-      if (resp.ok) {
-        const data = await resp.json()
-        setArticleLikes((prev) => ({ ...prev, [articleId]: data.likes }))
-      }
+      setNextCursor(response.next_cursor ?? '')
     } catch (err) {
-      console.error('Like error:', err)
+      handleError(err, 'Failed to load signals board')
     } finally {
-      setLikingArticle((prev) => ({ ...prev, [articleId]: false }))
+      setLoading(false)
+      setLoadingMore(false)
     }
-  }
-
-  const toggleArticleBody = (id: number) => {
-    setExpandedArticles((prev) => ({
-      ...prev,
-      [id]: !prev[id],
-    }))
-  }
-
-  const formatTimestamp = (ts: string) => {
-    return new Date(ts).toLocaleString()
   }
 
   useEffect(() => {
-    fetchArticles()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    let cancelled = false
+
+    Promise.all([feedService.getSources(), feedService.getPreferences()])
+      .then(([loadedSources, loadedPreferences]) => {
+        if (cancelled) return
+        setSources(loadedSources)
+        syncPreferencesDraft(loadedPreferences)
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          handleError(err, 'Failed to load feed settings')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
   }, [])
 
+  useEffect(() => {
+    setItems([])
+    setNextCursor('')
+    void loadBoard(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, sourceFilter])
+
+  useEffect(() => {
+    if (!nextCursor || loadingMore || loading) return undefined
+    const target = sentinelRef.current
+    if (!target) return undefined
+
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        void loadBoard(false)
+      }
+    }, { rootMargin: '400px' })
+
+    observer.observe(target)
+    return () => observer.disconnect()
+  }, [nextCursor, loadingMore, loading])
+
+  const handleToggleLike = async (itemId: number) => {
+    setItems((prev) => prev.map((item) => (
+      item.id === itemId
+        ? {
+            ...item,
+            liked: !item.liked,
+            like_count: item.liked ? Math.max(0, item.like_count - 1) : item.like_count + 1,
+          }
+        : item
+    )))
+
+    try {
+      const response = await feedService.toggleLike(itemId)
+      setItems((prev) => prev.map((item) => (
+        item.id === itemId
+          ? { ...item, liked: response.liked, like_count: response.count }
+          : item
+      )))
+    } catch (err) {
+      handleError(err, 'Failed to update like')
+      void loadBoard(true)
+    }
+  }
+
+  const handleToggleSave = async (itemId: number) => {
+    setItems((prev) => prev.map((item) => (
+      item.id === itemId
+        ? {
+            ...item,
+            saved: !item.saved,
+            save_count: item.saved ? Math.max(0, item.save_count - 1) : item.save_count + 1,
+          }
+        : item
+    )))
+
+    try {
+      const response = await feedService.toggleSave(itemId)
+      setItems((prev) => prev.map((item) => (
+        item.id === itemId
+          ? { ...item, saved: response.saved, save_count: response.count }
+          : item
+      )))
+    } catch (err) {
+      handleError(err, 'Failed to update save')
+      void loadBoard(true)
+    }
+  }
+
+  const handleSavePreferences = async () => {
+    setPreferencesSaving(true)
+    setError('')
+    try {
+      const payload: FeedPreferences = {
+        topics: parseCommaSeparated(draftTopics),
+        tickers: parseCommaSeparated(draftTickers).map((value) => value.toUpperCase()),
+        sources: draftSources,
+      }
+      const response = await feedService.savePreferences(payload)
+      syncPreferencesDraft(response)
+      setPreferencesOpen(false)
+      setItems([])
+      setNextCursor('')
+      await loadBoard(true)
+    } catch (err) {
+      handleError(err, 'Failed to save feed preferences')
+    } finally {
+      setPreferencesSaving(false)
+    }
+  }
+
+  const heroStats = useMemo(() => {
+    const likes = items.reduce((sum, item) => sum + item.like_count, 0)
+    const saves = items.reduce((sum, item) => sum + item.save_count, 0)
+    const preferenceHits = items.filter((item) => item.preference_hit).length
+    return { likes, saves, preferenceHits }
+  }, [items])
+
   return (
-    <div className="feed-page">
-      <header className="feed-header">
-        <h1>Market Intelligence</h1>
-        <div className="feed-actions">
+    <div className="signals-board">
+      <section className="signals-hero">
+        <div className="signals-hero__copy">
+          <span className="signals-hero__eyebrow">{selectedTabMeta.eyebrow}</span>
+          <h1>Signals Board</h1>
+          <p>
+            Discover high-signal posts from public research, AI, macro, and market sources without
+            getting trapped in a plain RSS wall.
+          </p>
+        </div>
+        <div className="signals-hero__metrics">
+          <div className="signals-metric">
+            <strong>{items.length}</strong>
+            <span>Visible cards</span>
+          </div>
+          <div className="signals-metric">
+            <strong>{heroStats.preferenceHits}</strong>
+            <span>Matched to you</span>
+          </div>
+          <div className="signals-metric">
+            <strong>{heroStats.likes + heroStats.saves}</strong>
+            <span>Board interactions</span>
+          </div>
+        </div>
+      </section>
+
+      <section className="signals-toolbar">
+        <div className="signals-tabs" role="tablist" aria-label="Signals board tabs">
+          {BOARD_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              className={`signals-tab ${activeTab === tab.key ? 'signals-tab--active' : ''}`}
+              onClick={() => setActiveTab(tab.key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="signals-toolbar__actions">
+          <label className="signals-filter">
+            <span>Source</span>
+            <select value={sourceFilter} onChange={(event) => setSourceFilter(event.target.value)}>
+              <option value="all">All sources</option>
+              {sources.map((source) => (
+                <option key={source.id} value={source.name}>
+                  {source.name}
+                </option>
+              ))}
+            </select>
+          </label>
           <button
             type="button"
-            className="action-btn outline"
-            onClick={() => fetchArticles({ refresh: true })}
-            disabled={articlesLoading}
+            className="signals-settings-btn"
+            onClick={() => setPreferencesOpen((value) => !value)}
           >
-            {articlesLoading ? '↻ Refreshing...' : '↻ Refresh Feed'}
+            Tune Feed
           </button>
         </div>
-      </header>
+      </section>
 
-      {articlesError && <div className="feed-error">{articlesError}</div>}
+      <section className={`signals-preferences ${preferencesOpen ? 'signals-preferences--open' : ''}`}>
+        <div className="signals-preferences__header">
+          <div>
+            <p className="signals-preferences__eyebrow">Follow targets</p>
+            <h2>Personalize your board</h2>
+          </div>
+          <button type="button" className="signals-preferences__close" onClick={() => setPreferencesOpen(false)}>
+            Close
+          </button>
+        </div>
 
-      {!articlesLoading && !articlesError && articles.length === 0 && (
-        <div className="feed-status">No articles found in the intelligence stream.</div>
-      )}
+        <div className="signals-preferences__grid">
+          <label className="signals-input">
+            <span>Topics</span>
+            <input
+              type="text"
+              value={draftTopics}
+              onChange={(event) => setDraftTopics(event.target.value)}
+              placeholder="AI, Macro, Earnings"
+            />
+          </label>
 
-      <div className="feed-masonry">
-        {articles.map((article) => {
-          const expanded = !!expandedArticles[article.id]
-          const likes = articleLikes[article.id] ?? 0
-          const isLiking = !!likingArticle[article.id]
+          <label className="signals-input">
+            <span>Tickers</span>
+            <input
+              type="text"
+              value={draftTickers}
+              onChange={(event) => setDraftTickers(event.target.value)}
+              placeholder="NVDA, AAPL, TSLA"
+            />
+          </label>
+        </div>
 
-          return (
-            <article key={article.id} className="feed-card">
-              <div className="feed-card-content">
-                <div className="feed-card-meta">
-                  <span>{article.source || 'SYSTEM'}</span>
-                  <span>•</span>
-                  <span>{formatTimestamp(article.publishedAt || article.createdAt)}</span>
-                </div>
-                
-                <h3 className="feed-card-title">{article.title}</h3>
-                
-                <p className="feed-card-preview">{article.preview}</p>
-                
-                {expanded && <div className="feed-card-full">{article.content}</div>}
-              </div>
+        <div className="signals-source-picker">
+          <span>Preferred sources</span>
+          <div className="signals-source-picker__options">
+            {sources.map((source) => {
+              const selected = draftSources.includes(source.name)
+              return (
+                <button
+                  key={source.id}
+                  type="button"
+                  className={`signals-source-pill ${selected ? 'signals-source-pill--active' : ''}`}
+                  onClick={() => {
+                    setDraftSources((prev) => (
+                      selected
+                        ? prev.filter((value) => value !== source.name)
+                        : [...prev, source.name]
+                    ))
+                  }}
+                >
+                  {source.name}
+                </button>
+              )
+            })}
+          </div>
+        </div>
 
-              <div className="feed-card-footer">
-                <div className="feed-interaction">
-                  <button
-                    type="button"
-                    className="feed-btn"
-                    onClick={() => toggleArticleBody(article.id)}
-                  >
-                    {expanded ? '↑ Less' : '↓ More'}
-                  </button>
-                  <button
-                    type="button"
-                    className={`feed-btn ${likes > 0 ? 'active' : ''}`}
-                    onClick={() => handleLikeArticle(article.id)}
-                    disabled={isLiking}
-                  >
-                    ♥ {likes}
-                  </button>
-                </div>
-                {article.link && (
-                  <a
-                    className="feed-card-link"
-                    href={article.link}
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Visit Source ↗
-                  </a>
+        <div className="signals-preferences__footer">
+          <div className="signals-preferences__summary">
+            <span>{preferences.topics.length} topics</span>
+            <span>{preferences.tickers.length} tickers</span>
+            <span>{preferences.sources.length} sources</span>
+          </div>
+          <button
+            type="button"
+            className="signals-settings-btn signals-settings-btn--primary"
+            disabled={preferencesSaving}
+            onClick={() => void handleSavePreferences()}
+          >
+            {preferencesSaving ? 'Saving…' : 'Save preferences'}
+          </button>
+        </div>
+      </section>
+
+      {error && <div className="signals-error">{error}</div>}
+
+      {loading ? (
+        <div className="signals-grid">
+          {Array.from({ length: 8 }).map((_, index) => (
+            <FeedCardSkeleton key={index} />
+          ))}
+        </div>
+      ) : items.length === 0 ? (
+        <div className="signals-empty">
+          <h2>No signals surfaced</h2>
+          <p>Try another board tab or broaden the source filters.</p>
+        </div>
+      ) : (
+        <div className="signals-grid">
+          {items.map((item) => (
+            <article
+              key={item.id}
+              className="signal-card"
+              onClick={() => window.open(item.canonical_url, '_blank', 'noopener,noreferrer')}
+            >
+              <div className="signal-card__cover">
+                {item.cover_image_url ? (
+                  <img src={item.cover_image_url} alt="" loading="lazy" />
+                ) : (
+                  <div className={`signal-card__cover-fallback signal-card__cover-fallback--${item.source_type}`}>
+                    <span>{coverFallbackLabel(item)}</span>
+                  </div>
                 )}
               </div>
+
+              <div className="signal-card__body">
+                <div className="signal-card__meta">
+                  <span>{item.source_name}</span>
+                  <span>•</span>
+                  <span>{formatDate(item.published_at)}</span>
+                </div>
+
+                <h3>{item.title}</h3>
+                <p>{item.excerpt}</p>
+
+                <div className="signal-card__chips">
+                  {item.preference_hit && <span className="signal-chip signal-chip--matched">Matched</span>}
+                  {item.primary_topic && <span className="signal-chip">{item.primary_topic}</span>}
+                  {item.primary_ticker && <span className="signal-chip signal-chip--ticker">${item.primary_ticker}</span>}
+                  {(item.topics ?? []).slice(0, 2).map((topic) => (
+                    topic !== item.primary_topic ? <span key={topic} className="signal-chip">{topic}</span> : null
+                  ))}
+                </div>
+              </div>
+
+              <div className="signal-card__footer">
+                <div className="signal-card__actions">
+                  <button
+                    type="button"
+                    className={`signal-action ${item.liked ? 'signal-action--active' : ''}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void handleToggleLike(item.id)
+                    }}
+                  >
+                    ♥ {item.like_count}
+                  </button>
+                  <button
+                    type="button"
+                    className={`signal-action ${item.saved ? 'signal-action--saved' : ''}`}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      void handleToggleSave(item.id)
+                    }}
+                  >
+                    ✦ {item.save_count}
+                  </button>
+                </div>
+                <span className="signal-card__cta">Open Source ↗</span>
+              </div>
             </article>
-          )
-        })}
+          ))}
+        </div>
+      )}
+
+      <div ref={sentinelRef} className="signals-sentinel">
+        {loadingMore ? 'Loading more signals…' : nextCursor ? 'Scroll for more' : 'You have reached the end'}
       </div>
     </div>
   )

@@ -11,7 +11,7 @@ from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents import *
 from tradingagents.default_config import DEFAULT_CONFIG
-from tradingagents.agents.utils.memory import FinancialSituationMemory
+from tradingagents.agents.utils.memory import FinancialSituationMemory, PgVectorMemoryStore
 from tradingagents.agents.utils.agent_states import (
     AgentState,
     InvestDebateState,
@@ -99,12 +99,14 @@ class TradingAgentsGraph:
         self.deep_thinking_llm = build_llm(self.config, which="deep")
         self.quick_thinking_llm = build_llm(self.config, which="quick")
         
-        # Initialize memories
-        self.bull_memory = FinancialSituationMemory("bull_memory", self.config)
-        self.bear_memory = FinancialSituationMemory("bear_memory", self.config)
-        self.trader_memory = FinancialSituationMemory("trader_memory", self.config)
-        self.invest_judge_memory = FinancialSituationMemory("invest_judge_memory", self.config)
-        self.risk_manager_memory = FinancialSituationMemory("risk_manager_memory", self.config)
+        # Initialize memories — use PgVectorMemoryStore for persistence + user isolation
+        # when user_id is present; falls back to in-memory ChromaDB automatically.
+        _user_id = self.config.get("user_id")
+        self.bull_memory = PgVectorMemoryStore("bull_memory", self.config, user_id=_user_id)
+        self.bear_memory = PgVectorMemoryStore("bear_memory", self.config, user_id=_user_id)
+        self.trader_memory = PgVectorMemoryStore("trader_memory", self.config, user_id=_user_id)
+        self.invest_judge_memory = PgVectorMemoryStore("invest_judge_memory", self.config, user_id=_user_id)
+        self.risk_manager_memory = PgVectorMemoryStore("risk_manager_memory", self.config, user_id=_user_id)
 
         # Create tool nodes
         self.tool_nodes = self._create_tool_nodes()

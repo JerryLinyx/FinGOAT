@@ -2,6 +2,14 @@
 
 A FastAPI-based microservice that wraps the TradingAgents multi-agent LLM framework for financial trading analysis.
 
+For normal local development, do not start this service manually first. The repository default startup flow is root-level:
+
+```bash
+docker compose up --build
+```
+
+Use the manual commands in this document only when you are debugging the trading service in isolation.
+
 ## Features
 
 - **Async & Sync Analysis**: Support both asynchronous and synchronous trading analysis
@@ -38,6 +46,16 @@ Required API keys:
 - `ALPHA_VANTAGE_API_KEY`: Alpha Vantage API key for financial data
 
 ## Running the Service
+
+### Full Stack (Recommended)
+
+From the repo root:
+
+```bash
+docker compose up --build
+```
+
+### Service-Only Debugging
 
 ### Development Mode
 ```bash

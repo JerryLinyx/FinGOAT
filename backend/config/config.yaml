@@ -3,6 +3,9 @@ app:
   port: :3000
      # gin 模式: debug / release
 
+features:
+  require_pgvector: false
+
 database:
   host: localhost
   port: 5432
@@ -18,3 +21,11 @@ redis:
   addr: localhost:6379
   DB: 0
   Password: ""
+
+email:
+  smtp_host: ""
+  smtp_port: 587
+  smtp_user: ""
+  smtp_password: ""
+  from_address: "FinGOAT <noreply@fingoat.app>"
+  verify_url_base: "http://localhost"

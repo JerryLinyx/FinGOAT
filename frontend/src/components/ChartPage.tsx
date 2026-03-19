@@ -1,105 +1,267 @@
-import { useState, useCallback, useRef, useEffect } from 'react'
-import { createChart, CandlestickSeries, HistogramSeries } from 'lightweight-charts'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+    CandlestickSeries,
+    ColorType,
+    createChart,
+    CrosshairMode,
+    HistogramSeries,
+    LineSeries,
+} from 'lightweight-charts'
 import type { IChartApi } from 'lightweight-charts'
 import { tradingService } from '../services/tradingService'
-import type { OHLCVPoint } from '../services/tradingService'
+import type {
+    ChartQuoteResponse,
+    ChartTerminalCapabilities,
+    ChartTerminalResponse,
+    MarketMode,
+    TerminalPeriod,
+} from '../services/tradingService'
 import '../ChartPage.css'
 
-const VIEW_OPTIONS = [
-    { id: '1d', label: '1D', range: '3m', barLabel: 'daily bars', windowLabel: '3M window' },
-    { id: '1w', label: '1W', range: '1y', barLabel: 'weekly bars', windowLabel: '1Y window' },
-    { id: '1m', label: '1M', range: '5y', barLabel: 'monthly bars', windowLabel: '5Y window' },
+const PERIOD_OPTIONS = [
+    { id: 'intraday', label: '分时', disabled: true },
+    { id: 'day', label: '日K', disabled: false },
+    { id: 'week', label: '周K', disabled: false },
+    { id: 'month', label: '月K', disabled: false },
 ] as const
 
-type ViewOption = typeof VIEW_OPTIONS[number]
-type ViewOptionId = ViewOption['id']
-
-const getViewOption = (id: ViewOptionId): ViewOption => {
-    return VIEW_OPTIONS.find(option => option.id === id) ?? VIEW_OPTIONS[0]
-}
+type DisplayPeriodOption = typeof PERIOD_OPTIONS[number]['id']
 
 const HISTORY_KEY = 'fingoat_chart_history'
+const MARKET_STORAGE_KEY = 'fingoat_chart_market'
+const PERIOD_STORAGE_KEY = 'fingoat_chart_period'
 const MAX_HISTORY = 8
 
-function loadHistory(): string[] {
-    try {
-        const raw = localStorage.getItem(HISTORY_KEY)
-        return raw ? JSON.parse(raw) : []
-    } catch {
-        return []
-    }
-}
-
-function saveHistory(tickers: string[]) {
-    localStorage.setItem(HISTORY_KEY, JSON.stringify(tickers))
-}
-
-function addToHistory(current: string[], ticker: string): string[] {
-    const deduped = current.filter(t => t !== ticker)
-    return [ticker, ...deduped].slice(0, MAX_HISTORY)
+interface ChartHistoryEntry {
+    market: MarketMode
+    ticker: string
+    period: TerminalPeriod
 }
 
 interface ChartPageProps {
     onSessionExpired?: () => void
 }
 
+interface ChartBundle {
+    chart: IChartApi
+    series: any
+    valueByDate: Map<string, number>
+}
+
+function sanitizeTickerInput(value: string, market: MarketMode): string {
+    if (market === 'cn') {
+        return value.replace(/\D/g, '').slice(0, 6)
+    }
+    return value.toUpperCase().replace(/[^A-Z0-9.\-]/g, '').slice(0, 10)
+}
+
+function loadHistory(): ChartHistoryEntry[] {
+    try {
+        const raw = localStorage.getItem(HISTORY_KEY)
+        if (!raw) return []
+        const parsed = JSON.parse(raw) as Array<string | Partial<ChartHistoryEntry>>
+        return parsed
+            .map((entry) => {
+                if (typeof entry === 'string') {
+                    return { market: 'us' as const, ticker: entry, period: 'day' as const }
+                }
+                if (!entry || typeof entry.ticker !== 'string') return null
+                return {
+                    market: entry.market === 'cn' ? 'cn' : 'us',
+                    ticker: entry.ticker,
+                    period: entry.period === 'week' || entry.period === 'month' ? entry.period : 'day',
+                }
+            })
+            .filter((entry): entry is ChartHistoryEntry => Boolean(entry))
+    } catch {
+        return []
+    }
+}
+
+function loadMarket(): MarketMode {
+    return localStorage.getItem(MARKET_STORAGE_KEY) === 'cn' ? 'cn' : 'us'
+}
+
+function loadPeriod(): TerminalPeriod {
+    const value = localStorage.getItem(PERIOD_STORAGE_KEY)
+    return value === 'week' || value === 'month' ? value : 'day'
+}
+
+function saveHistory(history: ChartHistoryEntry[]) {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history))
+}
+
+function addToHistory(current: ChartHistoryEntry[], market: MarketMode, ticker: string, period: TerminalPeriod): ChartHistoryEntry[] {
+    const deduped = current.filter(entry => !(entry.market === market && entry.ticker === ticker))
+    return [{ market, ticker, period }, ...deduped].slice(0, MAX_HISTORY)
+}
+
+function normalizeTimeKey(time: unknown): string | null {
+    if (!time) return null
+    if (typeof time === 'string') return time
+    if (typeof time === 'number') return String(time)
+    if (typeof time === 'object' && time !== null && 'year' in (time as Record<string, unknown>)) {
+        const value = time as { year: number; month: number; day: number }
+        return `${value.year}-${String(value.month).padStart(2, '0')}-${String(value.day).padStart(2, '0')}`
+    }
+    return null
+}
+
+function formatQuoteValue(value?: number | null, digits = 2): string {
+    if (value === null || value === undefined || Number.isNaN(value)) return '--'
+    return value.toLocaleString('en-US', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+    })
+}
+
+function formatSignedValue(value?: number | null, digits = 2, suffix = ''): string {
+    if (value === null || value === undefined || Number.isNaN(value)) return '--'
+    const sign = value > 0 ? '+' : ''
+    return `${sign}${value.toLocaleString('en-US', {
+        minimumFractionDigits: digits,
+        maximumFractionDigits: digits,
+    })}${suffix}`
+}
+
+function formatCompactNumber(value?: number | null): string {
+    if (value === null || value === undefined || Number.isNaN(value)) return '--'
+    return new Intl.NumberFormat('en-US', {
+        notation: 'compact',
+        maximumFractionDigits: 2,
+    }).format(value)
+}
+
+function quoteTone(quote?: ChartQuoteResponse | null): 'up' | 'down' | 'flat' {
+    if ((quote?.change ?? 0) > 0) return 'up'
+    if ((quote?.change ?? 0) < 0) return 'down'
+    return 'flat'
+}
+
+function buildValueMap(points: Array<{ date: string; value?: number; close?: number; volume?: number }>, key: 'value' | 'close' | 'volume'): Map<string, number> {
+    const map = new Map<string, number>()
+    for (const point of points) {
+        const raw = point[key]
+        if (typeof raw === 'number' && Number.isFinite(raw)) {
+            map.set(point.date, raw)
+        }
+    }
+    return map
+}
+
+function getLayoutColors() {
+    const root = getComputedStyle(document.documentElement)
+    const getVar = (name: string, fallback: string) => root.getPropertyValue(name).trim() || fallback
+    return {
+        bg: getVar('--panel-bg', '#faf8f2'),
+        surface: getVar('--surface-soft', '#f1ede4'),
+        border: getVar('--panel-border', 'rgba(26,26,20,0.08)'),
+        text: getVar('--text-primary', '#191713'),
+        muted: getVar('--text-secondary', '#6f6b5f'),
+        green: '#cc3d4b',
+        red: '#2f9d63',
+        grid: 'rgba(106, 100, 87, 0.12)',
+    }
+}
+
 export function ChartPage({ onSessionExpired }: ChartPageProps) {
     const [ticker, setTicker] = useState('')
     const [activeTicker, setActiveTicker] = useState('')
-    const [view, setView] = useState<ViewOptionId>('1d')
+    const [market, setMarket] = useState<MarketMode>(loadMarket)
+    const [period, setPeriod] = useState<TerminalPeriod>(loadPeriod)
     const [loading, setLoading] = useState(false)
+    const [quoteRefreshing, setQuoteRefreshing] = useState(false)
     const [error, setError] = useState('')
-    const [data, setData] = useState<OHLCVPoint[]>([])
-    const [history, setHistory] = useState<string[]>(loadHistory)
+    const [terminal, setTerminal] = useState<ChartTerminalResponse | null>(null)
+    const [quote, setQuote] = useState<ChartQuoteResponse | null>(null)
+    const [history, setHistory] = useState<ChartHistoryEntry[]>(loadHistory)
 
-    const chartContainerRef = useRef<HTMLDivElement>(null)
-    const chartRef = useRef<IChartApi | null>(null)
+    const mainChartContainerRef = useRef<HTMLDivElement>(null)
+    const volumeChartContainerRef = useRef<HTMLDivElement>(null)
+    const macdChartContainerRef = useRef<HTMLDivElement>(null)
+    const chartBundlesRef = useRef<Partial<Record<'main' | 'volume' | 'macd', ChartBundle>>>({})
+    const syncingRangeRef = useRef(false)
+    const syncingCrosshairRef = useRef(false)
 
-    const fetchChart = useCallback(async (t: string, viewId: ViewOptionId) => {
-        if (!t.trim()) return
+    const capabilities: ChartTerminalCapabilities | null = terminal?.capabilities ?? null
+    const chartPoints = terminal?.chart ?? []
+    const activePeriodLabel = useMemo(() => PERIOD_OPTIONS.find(option => option.id === period)?.label ?? '日K', [period])
+    const tone = quoteTone(quote)
+
+    const fetchQuote = useCallback(async (tickerValue: string, marketValue: MarketMode, markLoading = false) => {
+        if (!tickerValue.trim()) return
+        if (markLoading) setQuoteRefreshing(true)
+        try {
+            const payload = await tradingService.getQuote(tickerValue, marketValue)
+            setQuote(payload)
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to refresh quote'
+            if (message.includes('401') || message.includes('Session')) {
+                onSessionExpired?.()
+            }
+            if (markLoading) {
+                setError(message)
+            }
+        } finally {
+            if (markLoading) setQuoteRefreshing(false)
+        }
+    }, [onSessionExpired])
+
+    const fetchTerminal = useCallback(async (rawTicker: string, nextPeriod: TerminalPeriod, nextMarket: MarketMode = market) => {
+        const formattedTicker = sanitizeTickerInput(rawTicker.trim(), nextMarket)
+        if (!formattedTicker) return
 
         setLoading(true)
         setError('')
         try {
-            const selectedView = getViewOption(viewId)
-            const result = await tradingService.getStockChart(t.trim().toUpperCase(), selectedView.range)
-            setData(result.data)
-            setActiveTicker(result.ticker)
+            const [terminalResult, quoteResult] = await Promise.all([
+                tradingService.getTerminal(formattedTicker, nextMarket, nextPeriod),
+                tradingService.getQuote(formattedTicker, nextMarket).catch(() => null),
+            ])
+            setTerminal(terminalResult)
+            setQuote(quoteResult)
+            setActiveTicker(terminalResult.ticker)
+            setTicker(terminalResult.ticker)
 
-            // Update history
             setHistory(prev => {
-                const updated = addToHistory(prev, result.ticker)
+                const updated = addToHistory(prev, nextMarket, terminalResult.ticker, nextPeriod)
                 saveHistory(updated)
                 return updated
             })
         } catch (err) {
-            const msg = err instanceof Error ? err.message : 'Failed to load chart'
-            setError(msg)
-            if (msg.includes('401') || msg.includes('Session')) {
+            const message = err instanceof Error ? err.message : 'Failed to load terminal'
+            setError(message)
+            if (message.includes('401') || message.includes('Session')) {
                 onSessionExpired?.()
             }
         } finally {
             setLoading(false)
         }
-    }, [onSessionExpired])
+    }, [market, onSessionExpired])
 
-    const handleSubmit = (e: React.FormEvent) => {
-        e.preventDefault()
+    const handleSubmit = (event: React.FormEvent) => {
+        event.preventDefault()
         if (ticker.trim()) {
-            fetchChart(ticker, view)
+            fetchTerminal(ticker, period, market)
         }
     }
 
-    const handleViewChange = (viewId: ViewOptionId) => {
-        setView(viewId)
+    const handlePeriodChange = (nextPeriod: DisplayPeriodOption) => {
+        if (nextPeriod === 'intraday') return
+        setPeriod(nextPeriod)
+        localStorage.setItem(PERIOD_STORAGE_KEY, nextPeriod)
         if (activeTicker) {
-            fetchChart(activeTicker, viewId)
+            fetchTerminal(activeTicker, nextPeriod, market)
         }
     }
 
-    const handleHistoryClick = (t: string) => {
-        setTicker(t)
-        fetchChart(t, view)
+    const handleHistoryClick = (entry: ChartHistoryEntry) => {
+        setMarket(entry.market)
+        setPeriod(entry.period)
+        localStorage.setItem(MARKET_STORAGE_KEY, entry.market)
+        localStorage.setItem(PERIOD_STORAGE_KEY, entry.period)
+        setTicker(entry.ticker)
+        fetchTerminal(entry.ticker, entry.period, entry.market)
     }
 
     const handleClearHistory = () => {
@@ -107,156 +269,362 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
         localStorage.removeItem(HISTORY_KEY)
     }
 
-    const selectedView = getViewOption(view)
+    const handleMarketChange = (nextMarket: MarketMode) => {
+        setMarket(nextMarket)
+        localStorage.setItem(MARKET_STORAGE_KEY, nextMarket)
+        setTicker(prev => sanitizeTickerInput(prev, nextMarket))
+        setActiveTicker('')
+        setTerminal(null)
+        setQuote(null)
+        setError('')
+    }
 
-    // Render chart when data changes
     useEffect(() => {
-        if (!chartContainerRef.current || data.length === 0) return
-
-        // Clean up previous chart
-        if (chartRef.current) {
-            chartRef.current.remove()
-            chartRef.current = null
+        if (!activeTicker || !capabilities?.quote_polling || market !== 'cn') {
+            return
         }
 
-        const container = chartContainerRef.current
+        let cancelled = false
+        let intervalId: number | null = null
 
-        const isDark = document.documentElement.classList.contains('theme-dark') ||
-            container.closest('.theme-dark') !== null
+        const sync = async () => {
+            if (document.visibilityState !== 'visible' || cancelled) return
+            await fetchQuote(activeTicker, market, false)
+        }
 
-        const chart = createChart(container, {
+        const start = () => {
+            if (intervalId !== null) return
+            intervalId = window.setInterval(sync, 15000)
+        }
+
+        const stop = () => {
+            if (intervalId !== null) {
+                window.clearInterval(intervalId)
+                intervalId = null
+            }
+        }
+
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') {
+                sync()
+                start()
+            } else {
+                stop()
+            }
+        }
+
+        handleVisibility()
+        document.addEventListener('visibilitychange', handleVisibility)
+
+        return () => {
+            cancelled = true
+            stop()
+            document.removeEventListener('visibilitychange', handleVisibility)
+        }
+    }, [activeTicker, capabilities?.quote_polling, fetchQuote, market])
+
+    useEffect(() => {
+        const mainContainer = mainChartContainerRef.current
+        const volumeContainer = volumeChartContainerRef.current
+        const macdContainer = macdChartContainerRef.current
+
+        if (!mainContainer || !volumeContainer || !macdContainer) return
+        if (chartPoints.length === 0) {
+            chartBundlesRef.current = {}
+            return
+        }
+
+        const colors = getLayoutColors()
+
+        const createBaseChart = (container: HTMLDivElement, showTime = false) => createChart(container, {
             width: container.clientWidth,
             height: container.clientHeight,
             layout: {
-                background: { color: 'transparent' },
-                textColor: isDark ? '#aaa8a0' : '#6b6960',
+                background: { type: ColorType.Solid, color: 'transparent' },
+                textColor: colors.muted,
                 fontFamily: "'Inter', system-ui, sans-serif",
+                fontSize: 11,
             },
             grid: {
-                vertLines: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(26,26,20,0.06)' },
-                horzLines: { color: isDark ? 'rgba(255,255,255,0.04)' : 'rgba(26,26,20,0.06)' },
+                vertLines: { color: colors.grid },
+                horzLines: { color: colors.grid },
             },
             crosshair: {
-                mode: 0,
+                mode: CrosshairMode.Normal,
+                vertLine: { color: 'rgba(29, 27, 22, 0.24)', width: 1, style: 2, labelBackgroundColor: colors.text },
+                horzLine: { color: 'rgba(29, 27, 22, 0.18)', width: 1, style: 2, labelBackgroundColor: colors.text },
             },
             rightPriceScale: {
-                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(26,26,20,0.1)',
+                borderColor: colors.border,
+                scaleMargins: showTime ? { top: 0.08, bottom: 0.12 } : { top: 0.08, bottom: 0.08 },
             },
             timeScale: {
-                borderColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(26,26,20,0.1)',
-                timeVisible: false,
+                borderColor: colors.border,
+                timeVisible: showTime,
+                secondsVisible: false,
+            },
+            localization: {
+                locale: 'zh-CN',
             },
         })
 
-        chartRef.current = chart
+        const mainChart = createBaseChart(mainContainer, false)
+        const volumeChart = createBaseChart(volumeContainer, false)
+        const macdChart = createBaseChart(macdContainer, true)
 
-        const candleSeries = chart.addSeries(CandlestickSeries, {
-            upColor: '#4caf7a',
-            downColor: '#e05252',
-            borderUpColor: '#4caf7a',
-            borderDownColor: '#e05252',
-            wickUpColor: '#4caf7a',
-            wickDownColor: '#e05252',
+        const candleSeries = mainChart.addSeries(CandlestickSeries, {
+            upColor: colors.red,
+            downColor: colors.green,
+            borderVisible: true,
+            borderUpColor: colors.red,
+            borderDownColor: colors.green,
+            wickUpColor: colors.red,
+            wickDownColor: colors.green,
+            priceLineVisible: false,
+            lastValueVisible: true,
         })
+        candleSeries.setData(chartPoints.map(point => ({
+            time: point.date,
+            open: point.open,
+            high: point.high,
+            low: point.low,
+            close: point.close,
+        })))
 
-        candleSeries.setData(
-            data.map(d => ({
-                time: d.date,
-                open: d.open,
-                high: d.high,
-                low: d.low,
-                close: d.close,
-            }))
-        )
+        if (capabilities?.ma) {
+            const maPalette: Array<[keyof ChartTerminalResponse['indicators']['ma'], string]> = [
+                ['ma5', '#e07126'],
+                ['ma10', '#3a8ee6'],
+                ['ma20', '#8d5cf6'],
+                ['ma60', '#2f9d63'],
+            ]
 
-        const volumeSeries = chart.addSeries(HistogramSeries, {
+            maPalette.forEach(([key, color]) => {
+                const series = mainChart.addSeries(LineSeries, {
+                    color,
+                    lineWidth: 2,
+                    priceLineVisible: false,
+                    lastValueVisible: false,
+                })
+                series.setData((terminal?.indicators.ma[key] ?? []).map(point => ({
+                    time: point.date,
+                    value: point.value,
+                })))
+            })
+        }
+
+        const volumeSeries = volumeChart.addSeries(HistogramSeries, {
+            color: colors.red,
             priceFormat: { type: 'volume' },
-            priceScaleId: 'volume',
+            priceLineVisible: false,
+            lastValueVisible: false,
         })
+        volumeSeries.setData(chartPoints.map(point => ({
+            time: point.date,
+            value: point.volume,
+            color: point.close >= point.open ? 'rgba(204, 61, 75, 0.72)' : 'rgba(47, 157, 99, 0.72)',
+        })))
 
-        chart.priceScale('volume').applyOptions({
-            scaleMargins: { top: 0.85, bottom: 0 },
-        })
+        let macdPrimarySeries: any = null
+        if (capabilities?.macd) {
+            const histSeries = macdChart.addSeries(HistogramSeries, {
+                priceLineVisible: false,
+                lastValueVisible: false,
+            })
+            histSeries.setData((terminal?.indicators.macd.hist ?? []).map(point => ({
+                time: point.date,
+                value: point.value,
+                color: point.value >= 0 ? 'rgba(204, 61, 75, 0.78)' : 'rgba(47, 157, 99, 0.78)',
+            })))
 
-        volumeSeries.setData(
-            data.map(d => ({
-                time: d.date,
-                value: d.volume,
-                color: d.close >= d.open
-                    ? 'rgba(76,175,122,0.25)'
-                    : 'rgba(224,82,82,0.25)',
-            }))
-        )
+            const difSeries = macdChart.addSeries(LineSeries, {
+                color: '#ffb54b',
+                lineWidth: 2,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            })
+            difSeries.setData((terminal?.indicators.macd.dif ?? []).map(point => ({
+                time: point.date,
+                value: point.value,
+            })))
 
-        chart.timeScale().fitContent()
+            const deaSeries = macdChart.addSeries(LineSeries, {
+                color: '#3a8ee6',
+                lineWidth: 2,
+                priceLineVisible: false,
+                lastValueVisible: false,
+            })
+            deaSeries.setData((terminal?.indicators.macd.dea ?? []).map(point => ({
+                time: point.date,
+                value: point.value,
+            })))
 
-        // Resize observer
-        const ro = new ResizeObserver(entries => {
+            macdPrimarySeries = histSeries
+        }
+
+        const bundles: Partial<Record<'main' | 'volume' | 'macd', ChartBundle>> = {
+            main: {
+                chart: mainChart,
+                series: candleSeries,
+                valueByDate: buildValueMap(chartPoints, 'close'),
+            },
+            volume: {
+                chart: volumeChart,
+                series: volumeSeries,
+                valueByDate: buildValueMap(chartPoints, 'volume'),
+            },
+        }
+
+        if (macdPrimarySeries) {
+            bundles.macd = {
+                chart: macdChart,
+                series: macdPrimarySeries,
+                valueByDate: buildValueMap((terminal?.indicators.macd.hist ?? []).map(point => ({
+                    date: point.date,
+                    value: point.value,
+                })), 'value'),
+            }
+        }
+
+        chartBundlesRef.current = bundles
+
+        const syncVisibleRange = (source: keyof typeof bundles, range: unknown) => {
+            if (!range || syncingRangeRef.current) return
+            syncingRangeRef.current = true
+            ;(Object.entries(chartBundlesRef.current) as Array<[keyof typeof bundles, ChartBundle | undefined]>).forEach(([key, bundle]) => {
+                if (!bundle || key === source) return
+                bundle.chart.timeScale().setVisibleLogicalRange(range as never)
+            })
+            syncingRangeRef.current = false
+        }
+
+        const syncCrosshair = (source: keyof typeof bundles, param: any) => {
+            if (syncingCrosshairRef.current) return
+            syncingCrosshairRef.current = true
+            const timeKey = normalizeTimeKey(param?.time)
+            ;(Object.entries(chartBundlesRef.current) as Array<[keyof typeof bundles, ChartBundle | undefined]>).forEach(([key, bundle]) => {
+                if (!bundle || key === source) return
+                const chartAny = bundle.chart as any
+                if (!timeKey || !bundle.valueByDate.has(timeKey)) {
+                    chartAny.clearCrosshairPosition?.()
+                    return
+                }
+                chartAny.setCrosshairPosition?.(bundle.valueByDate.get(timeKey), param.time, bundle.series)
+            })
+            syncingCrosshairRef.current = false
+        }
+
+        mainChart.timeScale().subscribeVisibleLogicalRangeChange(range => syncVisibleRange('main', range))
+        volumeChart.timeScale().subscribeVisibleLogicalRangeChange(range => syncVisibleRange('volume', range))
+        macdChart.timeScale().subscribeVisibleLogicalRangeChange(range => syncVisibleRange('macd', range))
+
+        mainChart.subscribeCrosshairMove(param => syncCrosshair('main', param))
+        volumeChart.subscribeCrosshairMove(param => syncCrosshair('volume', param))
+        macdChart.subscribeCrosshairMove(param => syncCrosshair('macd', param))
+
+        mainChart.timeScale().fitContent()
+        volumeChart.timeScale().fitContent()
+        macdChart.timeScale().fitContent()
+
+        const resizeObserver = new ResizeObserver(entries => {
             for (const entry of entries) {
-                const { width, height } = entry.contentRect
-                chart.applyOptions({ width, height })
+                const target = entry.target
+                const width = entry.contentRect.width
+                const height = entry.contentRect.height
+                if (target === mainContainer) {
+                    mainChart.applyOptions({ width, height })
+                } else if (target === volumeContainer) {
+                    volumeChart.applyOptions({ width, height })
+                } else if (target === macdContainer) {
+                    macdChart.applyOptions({ width, height })
+                }
             }
         })
-        ro.observe(container)
+
+        resizeObserver.observe(mainContainer)
+        resizeObserver.observe(volumeContainer)
+        resizeObserver.observe(macdContainer)
 
         return () => {
-            ro.disconnect()
-            chart.remove()
-            chartRef.current = null
+            resizeObserver.disconnect()
+            mainChart.remove()
+            volumeChart.remove()
+            macdChart.remove()
+            chartBundlesRef.current = {}
         }
-    }, [data])
+    }, [capabilities?.ma, capabilities?.macd, chartPoints, terminal])
 
     return (
-        <div className="chart-page">
-            <form className="chart-toolbar" onSubmit={handleSubmit}>
-                <div className="chart-ticker-group">
+        <div className="chart-page chart-terminal-page">
+            <form className="chart-terminal-toolbar" onSubmit={handleSubmit}>
+                <div className="chart-terminal-toolbar__cluster">
+                    <div className="chart-market-toggle" role="tablist" aria-label="Select market">
+                        <button
+                            type="button"
+                            className={`chart-market-btn ${market === 'us' ? 'chart-market-btn--active' : ''}`}
+                            onClick={() => handleMarketChange('us')}
+                            disabled={loading}
+                        >
+                            US
+                        </button>
+                        <button
+                            type="button"
+                            className={`chart-market-btn ${market === 'cn' ? 'chart-market-btn--active' : ''}`}
+                            onClick={() => handleMarketChange('cn')}
+                            disabled={loading}
+                        >
+                            A股
+                        </button>
+                    </div>
                     <input
                         type="text"
-                        className="chart-ticker-input"
-                        placeholder="Enter ticker, e.g. AAPL"
+                        className="chart-ticker-input chart-terminal-toolbar__ticker"
+                        placeholder={market === 'cn' ? '输入 A 股代码，例如 600519' : 'Enter ticker, e.g. AAPL'}
                         value={ticker}
-                        onChange={e => setTicker(e.target.value.toUpperCase())}
+                        onChange={event => setTicker(sanitizeTickerInput(event.target.value, market))}
                         disabled={loading}
-                        maxLength={10}
+                        maxLength={market === 'cn' ? 6 : 10}
                     />
                     <button
                         type="submit"
                         className="chart-load-btn"
                         disabled={loading || !ticker.trim()}
                     >
-                        {loading ? 'Loading…' : 'Load'}
+                        {loading ? '载入中…' : '打开终端'}
                     </button>
                 </div>
 
-                <div className="chart-range-group">
-                    {VIEW_OPTIONS.map(option => (
+                <div className="chart-terminal-periods" role="tablist" aria-label="Select chart period">
+                    {PERIOD_OPTIONS.map(option => (
                         <button
                             key={option.id}
                             type="button"
-                            className={`chart-range-btn ${view === option.id ? 'chart-range-btn--active' : ''}`}
-                            onClick={() => handleViewChange(option.id)}
-                            disabled={loading}
+                            className={`chart-terminal-period ${period === option.id ? 'chart-terminal-period--active' : ''}`}
+                            onClick={() => handlePeriodChange(option.id)}
+                            disabled={loading || option.disabled}
+                            title={option.disabled ? '分时将在后续版本开放' : undefined}
                         >
                             {option.label}
+                            {option.disabled && <span className="chart-terminal-period__badge">Soon</span>}
                         </button>
                     ))}
                 </div>
             </form>
 
-            {/* Query history row */}
             {history.length > 0 && (
-                <div className="chart-history">
+                <div className="chart-history chart-terminal-history">
                     <span className="chart-history-label">Recent</span>
                     <div className="chart-history-chips">
-                        {history.map(t => (
+                        {history.map(entry => (
                             <button
-                                key={t}
+                                key={`${entry.market}:${entry.ticker}:${entry.period}`}
                                 type="button"
-                                className={`chart-history-chip ${t === activeTicker ? 'chart-history-chip--active' : ''}`}
-                                onClick={() => handleHistoryClick(t)}
+                                className={`chart-history-chip ${entry.ticker === activeTicker && entry.market === market ? 'chart-history-chip--active' : ''}`}
+                                onClick={() => handleHistoryClick(entry)}
                                 disabled={loading}
                             >
-                                {t}
+                                <span>{entry.ticker}</span>
+                                <span className="chart-history-chip__market">{entry.market === 'cn' ? 'A股' : 'US'} · {entry.period.toUpperCase()}</span>
                             </button>
                         ))}
                     </div>
@@ -274,23 +642,141 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
 
             {error && <div className="chart-error">{error}</div>}
 
-            {activeTicker && !error && (
-                <div className="chart-header">
-                    <h2 className="chart-title">{activeTicker}</h2>
-                    {data.length > 0 && (
-                        <span className="chart-meta">{data.length} {selectedView.barLabel} · {selectedView.windowLabel}</span>
-                    )}
+            {!terminal && !loading && !error && (
+                <div className="chart-terminal-empty">
+                    <div className="chart-terminal-empty__icon">⌁</div>
+                    <h2>Professional Chart Terminal</h2>
+                    <p>{market === 'cn' ? '输入 6 位 A 股代码，进入专业盘布局。' : 'Enter a US ticker to open the terminal layout.'}</p>
                 </div>
             )}
 
-            <div className="chart-container" ref={chartContainerRef}>
-                {data.length === 0 && !loading && !error && (
-                    <div className="chart-placeholder">
-                        <span className="chart-placeholder-icon">📈</span>
-                        <p>Enter a stock ticker to view its K-line chart</p>
+            {terminal && (
+                <>
+                    <section className={`chart-terminal-quote chart-terminal-quote--${tone}`}>
+                        <div className="chart-terminal-quote__identity">
+                            <div className="chart-terminal-quote__eyebrow">{market === 'cn' ? 'A-share Terminal' : 'US Chart Terminal'}</div>
+                            <div className="chart-terminal-quote__title">
+                                <h2>{quote?.name || terminal.name}</h2>
+                                <span>{activeTicker}</span>
+                                <span className="chart-market-tag">{market === 'cn' ? 'A股' : 'US'}</span>
+                            </div>
+                            <div className="chart-terminal-quote__caption">
+                                {activePeriodLabel} · {quoteRefreshing ? 'refreshing…' : 'live board'}
+                            </div>
+                        </div>
+                        <div className="chart-terminal-quote__price">
+                            <strong>{formatQuoteValue(quote?.last_price)}</strong>
+                            <span>{formatSignedValue(quote?.change)}</span>
+                            <span>{formatSignedValue(quote?.change_pct, 2, '%')}</span>
+                        </div>
+                        <div className="chart-terminal-quote__grid">
+                            <div>
+                                <span>Open</span>
+                                <strong>{formatQuoteValue(quote?.open)}</strong>
+                            </div>
+                            <div>
+                                <span>High</span>
+                                <strong>{formatQuoteValue(quote?.high)}</strong>
+                            </div>
+                            <div>
+                                <span>Low</span>
+                                <strong>{formatQuoteValue(quote?.low)}</strong>
+                            </div>
+                            <div>
+                                <span>Prev Close</span>
+                                <strong>{formatQuoteValue(quote?.prev_close)}</strong>
+                            </div>
+                            <div>
+                                <span>Volume</span>
+                                <strong>{formatCompactNumber(quote?.volume)}</strong>
+                            </div>
+                            <div>
+                                <span>Turnover</span>
+                                <strong>{quote?.turnover_rate != null ? `${formatQuoteValue(quote.turnover_rate)}%` : '--'}</strong>
+                            </div>
+                        </div>
+                    </section>
+
+                    <div className="chart-terminal-shell">
+                        <section className="chart-terminal-board">
+                            <header className="chart-terminal-board__header">
+                                <div>
+                                    <h3>{terminal.name} Terminal</h3>
+                                    <p>{chartPoints.length} bars · {activePeriodLabel} · updated {new Date(terminal.updated_at).toLocaleString()}</p>
+                                </div>
+                                {terminal.partial && <span className="chart-terminal-board__flag">Partial data</span>}
+                            </header>
+
+                            <div className="chart-terminal-panels">
+                                <div className="chart-terminal-panel chart-terminal-panel--main">
+                                    <div className="chart-terminal-panel__label">Price / MA</div>
+                                    <div className="chart-terminal-panel__canvas" ref={mainChartContainerRef} />
+                                </div>
+                                <div className="chart-terminal-panel chart-terminal-panel--volume">
+                                    <div className="chart-terminal-panel__label">Volume</div>
+                                    <div className="chart-terminal-panel__canvas" ref={volumeChartContainerRef} />
+                                </div>
+                                <div className={`chart-terminal-panel chart-terminal-panel--macd ${!capabilities?.macd ? 'chart-terminal-panel--muted' : ''}`}>
+                                    <div className="chart-terminal-panel__label">MACD</div>
+                                    <div className="chart-terminal-panel__canvas" ref={macdChartContainerRef} />
+                                    {!capabilities?.macd && (
+                                        <div className="chart-terminal-panel__overlay">
+                                            <span>MACD is not available on the current market feed.</span>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        </section>
+
+                        <aside className="chart-terminal-sidebar">
+                            <section className="chart-terminal-sidebar__section">
+                                <div className="chart-terminal-sidebar__header">
+                                    <h4>Quote Metrics</h4>
+                                    <span>{capabilities?.terminal_sidebar ? 'A-share profile' : 'base feed only'}</span>
+                                </div>
+                                {terminal.sidebar.metrics.length > 0 ? (
+                                    <div className="chart-terminal-metrics">
+                                        {terminal.sidebar.metrics.map(metric => (
+                                            <div key={metric.label} className="chart-terminal-metric">
+                                                <span>{metric.label}</span>
+                                                <strong>{metric.value}</strong>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="chart-terminal-sidebar__empty">Advanced sidebar metrics are not available on this market feed.</div>
+                                )}
+                            </section>
+
+                            <section className="chart-terminal-sidebar__section">
+                                <div className="chart-terminal-sidebar__header">
+                                    <h4>Latest Notices</h4>
+                                    <span>{terminal.sidebar.notices.length} items</span>
+                                </div>
+                                {terminal.sidebar.notices.length > 0 ? (
+                                    <div className="chart-terminal-notices">
+                                        {terminal.sidebar.notices.map((notice, index) => (
+                                            <a
+                                                key={`${notice.title}-${index}`}
+                                                className="chart-terminal-notice"
+                                                href={notice.url || undefined}
+                                                target={notice.url ? '_blank' : undefined}
+                                                rel={notice.url ? 'noreferrer' : undefined}
+                                            >
+                                                <span className="chart-terminal-notice__meta">{notice.source}{notice.type ? ` · ${notice.type}` : ''}</span>
+                                                <strong>{notice.title}</strong>
+                                                <span className="chart-terminal-notice__date">{notice.date}</span>
+                                            </a>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="chart-terminal-sidebar__empty">No recent notices returned for the current symbol.</div>
+                                )}
+                            </section>
+                        </aside>
                     </div>
-                )}
-            </div>
+                </>
+            )}
         </div>
     )
 }

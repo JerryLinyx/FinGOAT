@@ -6,6 +6,7 @@ multi-agent trading analysis tasks.
 """
 
 import asyncio
+import concurrent.futures
 import json
 import logging
 import os
@@ -14,9 +15,10 @@ import sys
 import threading
 import time
 import uuid
+from copy import deepcopy
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, TypeVar
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -36,6 +38,13 @@ sys.path.insert(0, TRADING_AGENTS_PATH)
 
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.dataflows.akshare_utils import (
+    get_chart_data_akshare,
+    get_realtime_quote_akshare,
+    get_terminal_metrics_akshare,
+    get_terminal_notices_akshare,
+    get_terminal_snapshot_akshare,
+)
 
 # Load environment variables
 load_dotenv()
@@ -79,11 +88,18 @@ RECENT_TASK_LIMIT = 200
 REDIS_CONNECT_TIMEOUT_SECONDS = 5
 REDIS_SOCKET_TIMEOUT_SECONDS = 5
 WORKER_QUEUE_BLOCK_SECONDS = 5
+TERMINAL_CACHE_TTL_SECONDS = 60
+QUOTE_CACHE_TTL_SECONDS = 10
 
 redis_client: Optional[Redis] = None
 worker_redis_client: Optional[Redis] = None
 worker_thread: Optional[threading.Thread] = None
 worker_stop_event = threading.Event()
+terminal_cache_lock = threading.Lock()
+quote_cache_lock = threading.Lock()
+terminal_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+quote_cache: Dict[str, tuple[float, Dict[str, Any]]] = {}
+CacheValueT = TypeVar("CacheValueT")
 
 
 class TaskStatus(str, Enum):
@@ -97,6 +113,11 @@ class TaskStatus(str, Enum):
 class ExecutionMode(str, Enum):
     DEFAULT = "default"
     OPENCLAW = "openclaw"
+
+
+class MarketMode(str, Enum):
+    US = "us"
+    CN = "cn"
 
 
 class TradingAction(str, Enum):
@@ -135,6 +156,7 @@ class AnalysisRequest(BaseModel):
     task_id: Optional[str] = Field(default=None, description="Optional externally supplied task id")
     user_id: Optional[int] = Field(default=None, description="Authenticated user id for per-user agent routing")
     ticker: str = Field(..., description="Stock ticker symbol", example="NVDA")
+    market: MarketMode = Field(default=MarketMode.US, description="Target market: US equities or China A-shares")
     date: str = Field(..., description="Analysis date in YYYY-MM-DD format", example="2024-05-10")
     execution_mode: ExecutionMode = Field(default=ExecutionMode.DEFAULT, description="Execution backend mode")
     llm_config: Optional[LLMConfig] = Field(default=None, description="LLM configuration")
@@ -142,7 +164,14 @@ class AnalysisRequest(BaseModel):
     alpha_vantage_api_key: Optional[str] = Field(default=None, description="User's Alpha Vantage API key (injected by Go backend)")
 
     @validator("ticker")
-    def validate_ticker(cls, value: str) -> str:
+    def validate_ticker(cls, value: str, values: Dict[str, Any]) -> str:
+        market = values.get("market", MarketMode.US)
+        if market == MarketMode.CN:
+            if not re.fullmatch(r"\d{6}", value or ""):
+                raise ValueError("A-share ticker must be a 6-digit stock code")
+            if str(value).startswith("8"):
+                raise ValueError("Beijing Stock Exchange tickers are not supported in v1")
+            return str(value)
         if not value or len(value) > 10:
             raise ValueError("Ticker must be between 1 and 10 characters")
         return value.upper()
@@ -203,6 +232,7 @@ class AnalysisResponse(BaseModel):
     task_id: str
     status: TaskStatus
     ticker: str
+    market: MarketMode = MarketMode.US
     date: str
     execution_mode: ExecutionMode = ExecutionMode.DEFAULT
     decision: Optional[TradingDecision] = None
@@ -223,8 +253,234 @@ class HealthResponse(BaseModel):
     openclaw_gateway: Dict[str, Any] = Field(default_factory=dict)
 
 
+class ChartPoint(BaseModel):
+    date: str
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+class ChartResponse(BaseModel):
+    ticker: str
+    market: MarketMode
+    range: str
+    data: List[ChartPoint]
+
+
+class TerminalPeriod(str, Enum):
+    DAY = "day"
+    WEEK = "week"
+    MONTH = "month"
+
+
+class IndicatorPoint(BaseModel):
+    date: str
+    value: float
+
+
+class TerminalMAResponse(BaseModel):
+    ma5: List[IndicatorPoint] = Field(default_factory=list)
+    ma10: List[IndicatorPoint] = Field(default_factory=list)
+    ma20: List[IndicatorPoint] = Field(default_factory=list)
+    ma60: List[IndicatorPoint] = Field(default_factory=list)
+
+
+class TerminalMACDResponse(BaseModel):
+    dif: List[IndicatorPoint] = Field(default_factory=list)
+    dea: List[IndicatorPoint] = Field(default_factory=list)
+    hist: List[IndicatorPoint] = Field(default_factory=list)
+
+
+class TerminalIndicatorsResponse(BaseModel):
+    ma: TerminalMAResponse = Field(default_factory=TerminalMAResponse)
+    macd: TerminalMACDResponse = Field(default_factory=TerminalMACDResponse)
+
+
+class TerminalMetric(BaseModel):
+    label: str
+    value: str
+
+
+class TerminalNotice(BaseModel):
+    title: str
+    date: str
+    type: Optional[str] = None
+    source: str
+    url: Optional[str] = None
+
+
+class TerminalSidebarResponse(BaseModel):
+    metrics: List[TerminalMetric] = Field(default_factory=list)
+    notices: List[TerminalNotice] = Field(default_factory=list)
+
+
+class TerminalCapabilitiesResponse(BaseModel):
+    chart: bool = True
+    intraday: bool = False
+    ma: bool = True
+    macd: bool = True
+    notices: bool = True
+    terminal_sidebar: bool = True
+    quote_polling: bool = True
+
+
+class QuoteResponse(BaseModel):
+    ticker: str
+    market: MarketMode
+    name: str
+    updated_at: str
+    last_price: Optional[float] = None
+    change: Optional[float] = None
+    change_pct: Optional[float] = None
+    open: Optional[float] = None
+    high: Optional[float] = None
+    low: Optional[float] = None
+    prev_close: Optional[float] = None
+    volume: Optional[float] = None
+    amount: Optional[float] = None
+    turnover_rate: Optional[float] = None
+
+
+class TerminalResponse(BaseModel):
+    ticker: str
+    market: MarketMode
+    name: str
+    period: TerminalPeriod
+    updated_at: str
+    chart: List[ChartPoint] = Field(default_factory=list)
+    indicators: TerminalIndicatorsResponse = Field(default_factory=TerminalIndicatorsResponse)
+    sidebar: TerminalSidebarResponse = Field(default_factory=TerminalSidebarResponse)
+    capabilities: TerminalCapabilitiesResponse = Field(default_factory=TerminalCapabilitiesResponse)
+    partial: bool = False
+
+
 def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _ttl_cached_json(
+    cache: Dict[str, tuple[float, Dict[str, Any]]],
+    lock: threading.Lock,
+    key: str,
+    ttl_seconds: int,
+    factory: Callable[[], Dict[str, Any]],
+) -> Dict[str, Any]:
+    now = time.time()
+    with lock:
+        cached = cache.get(key)
+        if cached and now-cached[0] < ttl_seconds:
+            return deepcopy(cached[1])
+
+    try:
+        value = factory()
+    except Exception as exc:
+        with lock:
+            stale = cache.get(key)
+        if stale and _is_temporary_upstream_error(exc):
+            logger.warning("Serving stale cached payload for %s after temporary upstream error: %s", key, exc)
+            return deepcopy(stale[1])
+        raise
+
+    with lock:
+        cache[key] = (time.time(), deepcopy(value))
+    return value
+
+
+def _is_temporary_upstream_error(exc: Exception) -> bool:
+    lowered = str(exc).lower()
+    return (
+        "temporary upstream connection failure" in lowered
+        or "connection aborted" in lowered
+        or "remote end closed connection without response" in lowered
+        or "read timed out" in lowered
+        or "chunkedencodingerror" in lowered
+    )
+
+
+def _best_effort_with_timeout(factory: Callable[[], CacheValueT], timeout_seconds: float, default: CacheValueT) -> CacheValueT:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        future = executor.submit(factory)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except Exception:
+            future.cancel()
+            raise
+
+
+def _build_cn_quote_payload(ticker: str) -> Dict[str, Any]:
+    quote = get_realtime_quote_akshare(ticker)
+    return {
+        "ticker": quote["ticker"],
+        "market": MarketMode.CN,
+        "name": quote.get("name") or quote["ticker"],
+        "updated_at": utcnow_iso(),
+        "last_price": quote.get("last_price"),
+        "change": quote.get("change"),
+        "change_pct": quote.get("change_pct"),
+        "open": quote.get("open"),
+        "high": quote.get("high"),
+        "low": quote.get("low"),
+        "prev_close": quote.get("prev_close"),
+        "volume": quote.get("volume"),
+        "amount": quote.get("amount"),
+        "turnover_rate": quote.get("turnover_rate"),
+    }
+
+
+def _build_cn_terminal_payload(ticker: str, period: TerminalPeriod) -> Dict[str, Any]:
+    snapshot = get_terminal_snapshot_akshare(ticker, period.value)
+    chart = snapshot["chart"]
+    if not chart:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no chart data available for the requested A-share ticker")
+
+    indicators = snapshot["indicators"]
+    partial = False
+
+    metrics: List[Dict[str, str]] = []
+    notices: List[Dict[str, Any]] = []
+    try:
+        metrics = _best_effort_with_timeout(
+            lambda: get_terminal_metrics_akshare(ticker),
+            2.5,
+            [],
+        )
+    except Exception:
+        partial = True
+
+    try:
+        notices = _best_effort_with_timeout(
+            lambda: get_terminal_notices_akshare(ticker),
+            3.5,
+            [],
+        )
+    except Exception:
+        partial = True
+
+    return {
+        "ticker": ticker,
+        "market": MarketMode.CN,
+        "name": ticker,
+        "period": period,
+        "updated_at": utcnow_iso(),
+        "chart": chart,
+        "indicators": indicators,
+        "sidebar": {
+            "metrics": metrics,
+            "notices": notices,
+        },
+        "capabilities": {
+            "chart": True,
+            "intraday": False,
+            "ma": True,
+            "macd": True,
+            "notices": True,
+            "terminal_sidebar": True,
+            "quote_polling": True,
+        },
+        "partial": partial,
+    }
 
 
 def model_dump_compat(model: BaseModel) -> Dict[str, Any]:
@@ -354,6 +610,7 @@ def register_recent_task(task_id: str) -> None:
 def create_task_state(
     task_id: str,
     ticker: str,
+    market: MarketMode,
     date: str,
     execution_mode: ExecutionMode = ExecutionMode.DEFAULT,
 ) -> Dict[str, Any]:
@@ -362,6 +619,7 @@ def create_task_state(
         "status": TaskStatus.PENDING.value,
         "cancel_requested": False,
         "ticker": ticker,
+        "market": market.value,
         "date": date,
         "execution_mode": execution_mode.value,
         "decision": None,
@@ -407,10 +665,11 @@ NODE_STAGE_MAP = {
 
 
 def build_config(request: AnalysisRequest) -> Dict[str, Any]:
-    config = DEFAULT_CONFIG.copy()
+    config = deepcopy(DEFAULT_CONFIG)
     config["execution_mode"] = request.execution_mode.value
     config["task_id"] = request.task_id
     config["user_id"] = request.user_id
+    config["market"] = request.market.value
     config["openclaw_gateway_url"] = os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:8011").rstrip("/")
 
     if request.llm_config:
@@ -431,11 +690,54 @@ def build_config(request: AnalysisRequest) -> Dict[str, Any]:
             "fundamental_data": request.data_vendor_config.fundamental_data,
             "news_data": request.data_vendor_config.news_data,
         }
+    elif request.market == MarketMode.CN:
+        config["data_vendors"] = {
+            "core_stock_apis": "akshare",
+            "technical_indicators": "akshare",
+            "fundamental_data": "akshare",
+            "news_data": "akshare",
+        }
 
     if request.alpha_vantage_api_key:
         config["alpha_vantage_api_key"] = request.alpha_vantage_api_key
 
     return config
+
+
+# Mapping from normalised provider name → env var consumed by TradingAgents data layers.
+# dataflows/openai.py, memory.py, etc. read env vars directly rather than the config dict,
+# so we must mirror the per-user key into the process environment before each analysis run.
+# This is safe because the worker processes tasks sequentially on a single thread.
+_PROVIDER_ENV_MAP: Dict[str, str] = {
+    "openai": "OPENAI_API_KEY",
+    "anthropic": "ANTHROPIC_API_KEY",
+    "google": "GOOGLE_API_KEY",
+    "deepseek": "DEEPSEEK_API_KEY",
+    "dashscope": "DASHSCOPE_API_KEY",
+}
+
+
+def _inject_user_keys_to_env(config: Dict[str, Any]) -> None:
+    """Mirror per-user API keys from the request config into os.environ.
+
+    TradingAgents data-layer modules (dataflows/openai.py, agents/utils/memory.py, etc.)
+    read keys directly from os.getenv() rather than from the config dict.  We set them
+    here once per analysis run so every sub-module can find the correct user key without
+    needing to be refactored.
+    """
+    # Alpha Vantage — data provider key
+    av_key = config.get("alpha_vantage_api_key", "")
+    if av_key:
+        os.environ["ALPHA_VANTAGE_API_KEY"] = av_key
+
+    # LLM provider key — set both LLM_API_KEY (universal) and the provider-specific var
+    llm_key = config.get("llm_api_key", "")
+    if llm_key:
+        os.environ["LLM_API_KEY"] = llm_key
+        provider = str(config.get("llm_provider", "")).lower()
+        env_var = _PROVIDER_ENV_MAP.get(provider)
+        if env_var:
+            os.environ[env_var] = llm_key
 
 
 def extract_decision_info(decision_data: Any) -> TradingDecision:
@@ -757,7 +1059,7 @@ class TaskCancelledError(RuntimeError):
 
 def enqueue_analysis_request(request: AnalysisRequest) -> Dict[str, Any]:
     task_id = request.task_id or str(uuid.uuid4())
-    task_state = create_task_state(task_id, request.ticker, request.date, request.execution_mode)
+    task_state = create_task_state(task_id, request.ticker, request.market, request.date, request.execution_mode)
     payload = model_dump_compat(request)
     payload["task_id"] = task_id
 
@@ -772,6 +1074,7 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
     task_state = load_task_state(task_id) or create_task_state(
         task_id,
         request.ticker,
+        request.market,
         request.date,
         request.execution_mode,
     )
@@ -785,15 +1088,26 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
 
         task_state["status"] = TaskStatus.PROCESSING.value
         task_state["cancel_requested"] = False
+        task_state["market"] = request.market.value
         task_state["execution_mode"] = request.execution_mode.value
         save_task_state(task_state)
 
         start_time = datetime.now(timezone.utc)
 
         config = build_config(request)
-        av_key = config.get("alpha_vantage_api_key", "")
-        if av_key:
-            os.environ["ALPHA_VANTAGE_API_KEY"] = av_key
+        _inject_user_keys_to_env(config)
+
+        # Initialize usage collector
+        from usage_collector import UsageCollector
+        collector = UsageCollector(
+            task_id=task_id,
+            user_id=request.user_id or 0,
+            provider=str(config.get("llm_provider", "unknown")),
+            model=str(config.get("quick_think_llm", config.get("deep_think_llm", "unknown"))),
+            redis_client=get_redis_client(),
+        )
+        config["usage_collector"] = collector
+
         trading_graph = TradingAgentsGraph(debug=False, config=config)
         state, decision = trading_graph.propagate(
             request.ticker,
@@ -825,6 +1139,7 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
             {
                 "status": TaskStatus.COMPLETED.value,
                 "execution_mode": request.execution_mode.value,
+                "market": request.market.value,
                 "decision": model_dump_compat(trading_decision),
                 "stages": analysis_report.get("__stages", []),
                 "analysis_report": analysis_report,
@@ -836,6 +1151,12 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
         save_task_state(task_state)
 
         logger.info("Completed analysis for task %s in %.2fs", task_id, processing_time)
+
+        # Flush usage events to Redis for Go ingestion
+        try:
+            collector.flush_to_redis()
+        except Exception as flush_err:
+            logger.warning("Failed to flush usage events for task %s: %s", task_id, flush_err)
     except TaskCancelledError as exc:
         logger.info("Cancelled analysis task %s: %s", task_id, exc)
         latest_state = load_task_state(task_id) or task_state
@@ -843,17 +1164,23 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
             {
                 "status": TaskStatus.CANCELLED.value,
                 "cancel_requested": True,
+                "market": request.market.value,
                 "execution_mode": request.execution_mode.value,
                 "error": str(exc),
                 "completed_at": utcnow_iso(),
             }
         )
         save_task_state(latest_state)
+        try:
+            collector.flush_to_redis()
+        except Exception:
+            pass
     except Exception as exc:
         logger.error("Error in analysis task %s: %s", task_id, exc, exc_info=True)
         task_state.update(
             {
                 "status": TaskStatus.FAILED.value,
+                "market": request.market.value,
                 "execution_mode": request.execution_mode.value,
                 "stages": task_state.get("stages", []),
                 "error": str(exc),
@@ -861,12 +1188,16 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
             }
         )
         save_task_state(task_state)
+        try:
+            collector.flush_to_redis()
+        except Exception:
+            pass
 
 
 async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) -> None:
     """Async core of run_streaming_analysis: calls propagate_streaming and pushes events to Redis Stream."""
     task_state = load_task_state(task_id) or create_task_state(
-        task_id, request.ticker, request.date, request.execution_mode
+        task_id, request.ticker, request.market, request.date, request.execution_mode
     )
     stream_key = f"{STREAM_KEY_PREFIX}:{task_id}"
     client = get_redis_client()
@@ -877,6 +1208,7 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
 
     task_state["status"] = TaskStatus.PROCESSING.value
     task_state["cancel_requested"] = False
+    task_state["market"] = request.market.value
     task_state["execution_mode"] = request.execution_mode.value
     save_task_state(task_state)
 
@@ -915,12 +1247,19 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
 
     try:
         config = build_config(request)
-        # If a per-user Alpha Vantage key was injected by the Go backend, apply it
-        # to the process environment so TradingAgents dataflows can pick it up.
-        # Safe because analyses are processed sequentially by a single worker thread.
-        av_key = config.get("alpha_vantage_api_key", "")
-        if av_key:
-            os.environ["ALPHA_VANTAGE_API_KEY"] = av_key
+        _inject_user_keys_to_env(config)
+
+        # Initialize usage collector for streaming path
+        from usage_collector import UsageCollector
+        collector = UsageCollector(
+            task_id=task_id,
+            user_id=request.user_id or 0,
+            provider=str(config.get("llm_provider", "unknown")),
+            model=str(config.get("quick_think_llm", config.get("deep_think_llm", "unknown"))),
+            redis_client=client,
+        )
+        config["usage_collector"] = collector
+
         trading_graph = TradingAgentsGraph(debug=False, config=config)
         final_state = await trading_graph.propagate_streaming(
             request.ticker,
@@ -948,8 +1287,9 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
 
         task_state.update({
             "status": TaskStatus.COMPLETED.value,
-            "execution_mode": request.execution_mode.value,
-            "decision": model_dump_compat(trading_decision),
+                "execution_mode": request.execution_mode.value,
+                "market": request.market.value,
+                "decision": model_dump_compat(trading_decision),
             "stages": analysis_report.get("__stages", []),
             "analysis_report": analysis_report,
             "completed_at": end_time.isoformat(),
@@ -961,17 +1301,27 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
         client.xadd(stream_key, {"type": "task_complete", "status": "completed"})
         logger.info("Streaming analysis completed for task %s in %.2fs", task_id, processing_time)
 
+        try:
+            collector.flush_to_redis()
+        except Exception as flush_err:
+            logger.warning("Failed to flush usage events for streaming task %s: %s", task_id, flush_err)
+
     except TaskCancelledError as exc:
         logger.info("Streaming task %s cancelled: %s", task_id, exc)
         latest = load_task_state(task_id) or task_state
         latest.update({
             "status": TaskStatus.CANCELLED.value,
-            "cancel_requested": True,
-            "execution_mode": request.execution_mode.value,
+                "cancel_requested": True,
+                "market": request.market.value,
+                "execution_mode": request.execution_mode.value,
             "error": str(exc),
             "completed_at": utcnow_iso(),
         })
         save_task_state(latest)
+        try:
+            collector.flush_to_redis()
+        except Exception:
+            pass
         try:
             client.xadd(stream_key, {"type": "task_error", "error": str(exc)})
         except Exception:
@@ -980,13 +1330,18 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
     except Exception as exc:
         logger.error("Streaming analysis task %s failed: %s", task_id, exc, exc_info=True)
         task_state.update({
-            "status": TaskStatus.FAILED.value,
-            "execution_mode": request.execution_mode.value,
+                "status": TaskStatus.FAILED.value,
+                "market": request.market.value,
+                "execution_mode": request.execution_mode.value,
             "stages": task_state.get("stages", []),
             "error": str(exc),
             "completed_at": utcnow_iso(),
         })
         save_task_state(task_state)
+        try:
+            collector.flush_to_redis()
+        except Exception:
+            pass
         try:
             client.xadd(stream_key, {"type": "task_error", "error": str(exc)})
         except Exception:
@@ -1061,12 +1416,14 @@ def analysis_worker_loop() -> None:
                         task_state = load_task_state(task_id) or create_task_state(
                             task_id,
                             ticker,
+                            MarketMode(maybe_payload.get("market", MarketMode.US.value)),
                             date,
                             ExecutionMode(execution_mode),
                         )
                         task_state.update(
                             {
                                 "status": TaskStatus.FAILED.value,
+                                "market": maybe_payload.get("market", MarketMode.US.value),
                                 "execution_mode": execution_mode,
                                 "error": str(exc),
                                 "completed_at": utcnow_iso(),
@@ -1149,6 +1506,86 @@ async def health_check() -> HealthResponse:
     )
 
 
+@app.get("/api/v1/chart", response_model=ChartResponse)
+async def get_market_chart(
+    ticker: str,
+    range: str = "3m",
+    market: MarketMode = MarketMode.US,
+) -> ChartResponse:
+    if market != MarketMode.CN:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only cn market is supported on this chart endpoint")
+
+    try:
+        points = get_chart_data_akshare(ticker, range)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to fetch A-share chart data: {exc}") from exc
+
+    if not points:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no chart data available for the requested A-share ticker")
+
+    return ChartResponse(
+        ticker=ticker,
+        market=market,
+        range=range,
+        data=[ChartPoint(**point) for point in points],
+    )
+
+
+@app.get("/api/v1/quote", response_model=QuoteResponse)
+async def get_market_quote(
+    ticker: str,
+    market: MarketMode = MarketMode.US,
+) -> QuoteResponse:
+    if market != MarketMode.CN:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only cn market is supported on this quote endpoint")
+
+    try:
+        payload = _ttl_cached_json(
+            quote_cache,
+            quote_cache_lock,
+            f"cn:{ticker}",
+            QUOTE_CACHE_TTL_SECONDS,
+            lambda: _build_cn_quote_payload(ticker),
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to fetch A-share quote data for %s", ticker)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to fetch A-share quote data: {exc}") from exc
+
+    return QuoteResponse(**payload)
+
+
+@app.get("/api/v1/terminal", response_model=TerminalResponse)
+async def get_market_terminal(
+    ticker: str,
+    period: TerminalPeriod = TerminalPeriod.DAY,
+    market: MarketMode = MarketMode.US,
+) -> TerminalResponse:
+    if market != MarketMode.CN:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="only cn market is supported on this terminal endpoint")
+
+    try:
+        payload = _ttl_cached_json(
+            terminal_cache,
+            terminal_cache_lock,
+            f"cn:{ticker}:{period.value}",
+            TERMINAL_CACHE_TTL_SECONDS,
+            lambda: _build_cn_terminal_payload(ticker, period),
+        )
+    except HTTPException:
+        raise
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("Failed to build A-share terminal data for %s (%s)", ticker, period.value)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to build A-share terminal data: {exc}") from exc
+
+    return TerminalResponse(**payload)
+
+
 # --------------------------------------------------------------------------- #
 # DEPRECATED: Direct analysis endpoints.                                       #
 # All analysis requests must go through the Go backend, which enqueues tasks   #
@@ -1172,7 +1609,7 @@ async def analyze_stock_sync(request: AnalysisRequest) -> AnalysisResponse:
     task_id = request.task_id or str(uuid.uuid4())
     request.task_id = task_id
 
-    task_state = create_task_state(task_id, request.ticker, request.date)
+    task_state = create_task_state(task_id, request.ticker, request.market, request.date)
     save_task_state(task_state)
     register_recent_task(task_id)
 

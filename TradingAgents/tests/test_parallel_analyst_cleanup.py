@@ -25,6 +25,7 @@ MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC is not None and SPEC.loader is not None
 SPEC.loader.exec_module(MODULE)
 ConditionalLogic = MODULE.ConditionalLogic
+sanitize_orphan_tool_calls = MODULE.sanitize_orphan_tool_calls
 
 
 class ParallelAnalystCleanupTest(unittest.TestCase):
@@ -53,6 +54,26 @@ class ParallelAnalystCleanupTest(unittest.TestCase):
         self.assertEqual(self.logic.should_continue_social(state), "tools_social")
         self.assertEqual(self.logic.should_continue_news(state), "tools_news")
         self.assertEqual(self.logic.should_continue_fundamentals(state), "tools_fundamentals")
+
+    def test_sanitize_preserves_paired_tool_calls(self) -> None:
+        ai_message = SimpleNamespace(
+            tool_calls=[{"id": "call-1"}],
+            additional_kwargs={"tool_calls": [{"id": "call-1"}]},
+        )
+        tool_message = SimpleNamespace(type="tool", tool_call_id="call-1")
+        cleaned = sanitize_orphan_tool_calls([ai_message, tool_message])
+        self.assertEqual(cleaned[0].tool_calls, [{"id": "call-1"}])
+
+    def test_sanitize_strips_interleaved_tool_calls(self) -> None:
+        ai_message = SimpleNamespace(
+            tool_calls=[{"id": "call-1"}],
+            additional_kwargs={"tool_calls": [{"id": "call-1"}]},
+        )
+        interleaving_message = SimpleNamespace(type="ai", tool_calls=[])
+        tool_message = SimpleNamespace(type="tool", tool_call_id="call-1")
+        cleaned = sanitize_orphan_tool_calls([ai_message, interleaving_message, tool_message])
+        self.assertEqual(cleaned[0].tool_calls, [])
+        self.assertNotIn("tool_calls", cleaned[0].additional_kwargs)
 
 
 if __name__ == "__main__":

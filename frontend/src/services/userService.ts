@@ -35,6 +35,7 @@ export async function getProfile(): Promise<UserProfile> {
 export async function updateProfile(data: {
   display_name?: string
   avatar_url?: string
+  email?: string
 }): Promise<UserProfile> {
   const res = await fetch(`${API_BASE_URL}/api/user/profile`, {
     method: 'PUT',
@@ -64,6 +65,14 @@ export async function upsertAPIKey(provider: string, key: string): Promise<APIKe
 export async function deleteAPIKey(provider: string): Promise<void> {
   const res = await fetch(`${API_BASE_URL}/api/user/api-keys/${encodeURIComponent(provider)}`, {
     method: 'DELETE',
+    headers: getAuthHeaders(),
+  })
+  await handleResponse<unknown>(res)
+}
+
+export async function resendVerification(): Promise<void> {
+  const res = await fetch(`${API_BASE_URL}/api/user/resend-verification`, {
+    method: 'POST',
     headers: getAuthHeaders(),
   })
   await handleResponse<unknown>(res)

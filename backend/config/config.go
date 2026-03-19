@@ -4,6 +4,7 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/viper"
 )
@@ -13,6 +14,9 @@ type Config struct {
 		Name string `yaml:"name"`
 		Port string `yaml:"port"`
 	} `yaml:"app"`
+	Features struct {
+		RequirePgvector bool `yaml:"require_pgvector"`
+	} `yaml:"features"`
 	Database struct {
 		Host         string `yaml:"host"`
 		Port         string `yaml:"port"`
@@ -58,6 +62,9 @@ func InitConfig() {
 func overrideWithEnv() {
 	if v := os.Getenv("APP_PORT"); v != "" {
 		AppConfig.App.Port = v
+	}
+	if v := os.Getenv("REQUIRE_PGVECTOR"); v != "" {
+		AppConfig.Features.RequirePgvector = strings.EqualFold(v, "true") || v == "1"
 	}
 
 	if v := os.Getenv("DB_HOST"); v != "" {

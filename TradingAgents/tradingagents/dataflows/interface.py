@@ -5,6 +5,15 @@ from .local import get_YFin_data, get_finnhub_news, get_finnhub_company_insider_
 from .y_finance import get_YFin_data_online, get_stock_stats_indicators_window, get_balance_sheet as get_yfinance_balance_sheet, get_cashflow as get_yfinance_cashflow, get_income_statement as get_yfinance_income_statement, get_insider_transactions as get_yfinance_insider_transactions
 from .google import get_google_news
 from .openai import get_stock_news_openai, get_global_news_openai, get_fundamentals_openai
+from .akshare_utils import (
+    get_stock_data_akshare,
+    get_indicators_akshare,
+    get_fundamentals_akshare,
+    get_balance_sheet_akshare,
+    get_cashflow_akshare,
+    get_income_statement_akshare,
+    get_news_akshare,
+)
 from .alpha_vantage import (
     get_stock as get_alpha_vantage_stock,
     get_indicator as get_alpha_vantage_indicator,
@@ -60,7 +69,8 @@ VENDOR_LIST = [
     "yfinance",
     "alpha_vantage",
     "openai",
-    "google"
+    "google",
+    "akshare",
 ]
 
 TOOL_FALLBACKS = {
@@ -75,32 +85,38 @@ VENDOR_METHODS = {
         "alpha_vantage": get_alpha_vantage_stock,
         "yfinance": get_YFin_data_online,
         "local": get_YFin_data,
+        "akshare": get_stock_data_akshare,
     },
     # technical_indicators
     "get_indicators": {
         "alpha_vantage": get_alpha_vantage_indicator,
         "yfinance": get_stock_stats_indicators_window,
-        "local": get_stock_stats_indicators_window
+        "local": get_stock_stats_indicators_window,
+        "akshare": get_indicators_akshare,
     },
     # fundamental_data
     "get_fundamentals": {
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "openai": get_fundamentals_openai,
+        "akshare": get_fundamentals_akshare,
     },
     "get_balance_sheet": {
         "alpha_vantage": get_alpha_vantage_balance_sheet,
         "yfinance": get_yfinance_balance_sheet,
         "local": get_simfin_balance_sheet,
+        "akshare": get_balance_sheet_akshare,
     },
     "get_cashflow": {
         "alpha_vantage": get_alpha_vantage_cashflow,
         "yfinance": get_yfinance_cashflow,
         "local": get_simfin_cashflow,
+        "akshare": get_cashflow_akshare,
     },
     "get_income_statement": {
         "alpha_vantage": get_alpha_vantage_income_statement,
         "yfinance": get_yfinance_income_statement,
         "local": get_simfin_income_statements,
+        "akshare": get_income_statement_akshare,
     },
     # news_data
     "get_news": {
@@ -108,6 +124,7 @@ VENDOR_METHODS = {
         "openai": get_stock_news_openai,
         "google": get_google_news,
         "local": [get_finnhub_news, get_reddit_company_news, get_google_news],
+        "akshare": get_news_akshare,
     },
     "get_global_news": {
         "alpha_vantage": get_alpha_vantage_global_news,

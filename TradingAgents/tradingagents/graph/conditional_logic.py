@@ -33,59 +33,64 @@ def _analyst_tool_calls_in_messages(messages) -> int:
     )
 
 
+def _strip_tool_calls(msg):
+    cleaned = copy.copy(msg)
+    cleaned.tool_calls = []
+    if hasattr(cleaned, "additional_kwargs"):
+        cleaned.additional_kwargs = {
+            k: v for k, v in cleaned.additional_kwargs.items() if k != "tool_calls"
+        }
+    return cleaned
+
+
 def sanitize_orphan_tool_calls(messages: list) -> list:
-    """Strip orphaned tool_calls from the tail of a message list.
+    """Strip any tool_calls that are not immediately resolved by ToolMessages.
 
-    DashScope (and other strict providers) reject message histories where an
-    AIMessage has ``tool_calls`` but is NOT immediately followed by the
-    corresponding ``ToolMessage`` responses.  This typically happens when an
-    analyst hits the iteration limit and we exit the tool-calling loop early.
+    DashScope enforces strict tool-call ordering: every assistant message that
+    contains ``tool_calls`` must be followed by the corresponding tool result
+    messages before any other assistant/human/system message appears.
 
-    The function works **backwards** from the end of the list, removing
-    ``tool_calls`` (and the matching ``additional_kwargs`` entry) from any
-    trailing AIMessage that lacks a paired ToolMessage.  It stops as soon as
-    it encounters a properly-paired tool call or a non-AI message.
+    The original implementation only cleaned a trailing orphaned tool call.
+    That is insufficient when analysts run in parallel and one branch's pending
+    tool call is interleaved with another branch's assistant message.
 
-    Returns a *new* list (original is not mutated).
+    Returns a new list where any AI message whose tool calls are not fully
+    matched by subsequent contiguous ToolMessages has those tool calls removed.
     """
     if not messages:
         return messages
 
-    result = list(messages)  # shallow copy
-    i = len(result) - 1
+    result = list(messages)
 
-    while i >= 0:
-        msg = result[i]
-        # Only AIMessages (or subclasses) carry tool_calls
-        if not getattr(msg, "tool_calls", None):
-            break  # no orphan — stop scanning
+    for i, msg in enumerate(result):
+        tool_calls = getattr(msg, "tool_calls", None) or []
+        if not tool_calls:
+            continue
 
-        # Check whether the *next* message (i+1) is a ToolMessage for this call
-        has_paired_tool = False
-        if i + 1 < len(result):
-            next_msg = result[i + 1]
-            if getattr(next_msg, "type", None) == "tool":
-                has_paired_tool = True
+        expected_ids = {
+            call.get("id")
+            for call in tool_calls
+            if isinstance(call, dict) and call.get("id")
+        }
+        if not expected_ids:
+            continue
 
-        if has_paired_tool:
-            break  # properly paired — nothing to clean
+        seen_ids = set()
+        j = i + 1
+        while j < len(result) and getattr(result[j], "type", None) == "tool":
+            tool_call_id = getattr(result[j], "tool_call_id", None)
+            if tool_call_id:
+                seen_ids.add(tool_call_id)
+            j += 1
 
-        # Orphan detected: deep-copy and strip tool_calls
-        cleaned = copy.copy(msg)
-        cleaned.tool_calls = []
-        if hasattr(cleaned, "additional_kwargs"):
-            cleaned.additional_kwargs = {
-                k: v for k, v in cleaned.additional_kwargs.items()
-                if k != "tool_calls"
-            }
-        # Preserve any text content the model did produce
-        result[i] = cleaned
+        if expected_ids.issubset(seen_ids):
+            continue
+
+        result[i] = _strip_tool_calls(msg)
         logger.warning(
-            "Stripped orphaned tool_calls from message at index %d "
-            "(likely analyst hit iteration limit)",
+            "Stripped orphaned/interleaved tool_calls from message at index %d",
             i,
         )
-        i -= 1
 
     return result
 

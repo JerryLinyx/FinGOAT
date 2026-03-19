@@ -3,7 +3,7 @@ import time
 import json
 
 
-def create_trader(llm, memory):
+def create_trader(llm, memory, usage_collector=None):
     def trader_node(state, name):
         company_name = state["company_of_interest"]
         investment_plan = state["investment_plan"]
@@ -35,7 +35,10 @@ def create_trader(llm, memory):
             context,
         ]
 
+        _start = time.time()
         result = llm.invoke(messages)
+        if usage_collector:
+            usage_collector.record_llm_call("Trader", result, _start)
 
         return {
             "messages": [result],

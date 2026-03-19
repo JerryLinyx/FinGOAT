@@ -18,129 +18,31 @@ FinGOAT 是一个全栈金融智能系统，融合了实时数据采集、图结
 - 中文部署指南：[DEPLOYMENT-CN.md](./DEPLOYMENT-CN.md)
 - 项目结构总览：[PROJECT_ORGANIZATION.md](./PROJECT_ORGANIZATION.md)
 
-## 快速开始
-
-### 克隆仓库
+### 快速开始
 
 ```bash
 git clone https://github.com/JerryLinyx/FinGOAT.git
 cd FinGOAT
-```
-
-### 后端配置 (Gin+GORM+PostgreSQL+Redis+Viper+JWT+Docker)
-
-#### 安装依赖
-```bash
-cd backend
-
-go mod init github.com/JerryLinyx/FinGOAT
-
-go get -u github.com/gin-gonic/gin
-go get github.com/spf13/viper
-go get -u gorm.io/gorm
-go get -u gorm.io/driver/postgres
-go get -u google.golang.org/grpc
-go get -u golang.org/x/crypto/bcrypt
-go get github.com/golang-jwt/jwt/v5
-go get -u github.com/go-redis/redis/v8
-go get github.com/gin-contrib/cors
-
-go mod tidy
-```
-
-#### 启动 PostgreSQL
-```bash
-docker pull postgres:15.14-alpine3.21
-
-docker run --name fingoat-pg \
-  --restart=unless-stopped \
-  -d -p 5432:5432 \
-  -v pgdata:/var/lib/postgresql/data \
-  -e POSTGRES_USER=postgres \
-  -e POSTGRES_PASSWORD=2233 \
-  -e POSTGRES_DB=fingoat_db \
-  postgres:15.14-alpine3.21
-```
-#### 启动 Redis
-```bash
-docker run -d \
-  --name fingoat-redis \
-  -p 6379:6379 \
-  -v redisdata:/data \
-  redis:7.2
-```
-#### 运行服务器
-```bash
-go run main.go
-# curl http://localhost:3000/api/trading/health
+docker compose up --build
 ```
 
 ![](assets/appinfra.png)
 
-### 前端配置 (TypeScript+Vite+React)
-```bash
-npm create vite@latest frontend
+这是当前本地全栈启动的唯一主路径，会统一构建并启动 nginx、frontend、Go backend、Python trading service、PostgreSQL 和 Redis。
 
-cd frontend
-npm install
-npm run build
-npm run dev
-# http://localhost:5173/
-```
+启动后可访问：
 
-### 智能代理配置 (LangChain+LangGraph+FastAPI)
+- 应用入口：`http://localhost`
+- Go 健康检查：`http://localhost/api/health`
+- Trading 健康检查：`http://localhost/api/trading/health`
 
-1) 创建 Python 环境并安装依赖
-```bash
-cd langchain-v1
-python3 -m venv .venv
-source .venv/bin/activate
+### 单服务调试
 
-# 如果需要
-conda deactivate
+如果你只是单独调试某个服务，可以把手动启动当成例外路径；仓库默认仍然是根目录 Docker Compose 启动。相关说明见：
 
-pip install --upgrade pip
-pip install -r requirements.txt
-
-# 对于 python3
-# python3 -m pip install --upgrade pip
-# python3 -m pip install -r requirements.txt
-```
-
-2) 配置 API 密钥和服务设置
-```bash
-cp .env.trading .env
-# 设置 OPENAI_API_KEY 和 ALPHA_VANTAGE_API_KEY（或其他 API）
-# 如需要，调整 TRADING_SERVICE_PORT / CORS_ORIGINS
-```
-
-3) 运行 FastAPI 微服务
-```bash
-# 开发模式（自动重载，日志输出到控制台）
-python trading_service.py
-# python3 trading_service.py
-# http://localhost:8001/
-
-# 生产模式
-uvicorn trading_service:app --host 0.0.0.0 --port 8001 --workers 4
-```
-服务文档位于 http://localhost:8001/docs，健康检查位于 `/health`。
-
-4) 触发分析的示例请求
-```bash
-curl -X POST http://localhost:8001/api/v1/analyze \
-  -H "Content-Type: application/json" \
-  -d '{
-        "ticker": "NVDA",
-        "date": "2024-05-10",
-        "llm_config": {
-          "deep_think_llm": "gpt-4o-mini",
-          "quick_think_llm": "gpt-4o-mini",
-          "max_debate_rounds": 1
-        }
-      }'
-```
-响应返回一个 `task_id`；轮询 `/api/v1/analysis/{task_id}` 获取结果。
+- [docs/local-dev-operations.md](./docs/local-dev-operations.md)
+- [backend/TRADING_API.md](./backend/TRADING_API.md)
+- [langchain-v1/TRADING_SERVICE_README.md](./langchain-v1/TRADING_SERVICE_README.md)
 
 #### 界面展示
 **登录页面**

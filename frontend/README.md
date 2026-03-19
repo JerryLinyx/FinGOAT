@@ -44,6 +44,14 @@ npm run preview
 
 ## Backend API expectations
 
+For full-stack local startup, use root-level Docker Compose:
+
+```bash
+docker compose up --build
+```
+
+The commands in this frontend folder are for frontend-only work. They are not the default way to boot the whole FinGOAT stack.
+
 The frontend expects the following backend routes:
 
 - `POST /api/auth/login`
@@ -56,6 +64,12 @@ The frontend expects the following backend routes:
 - `GET /api/trading/analyses`
 - `GET /api/trading/stats`
 - `GET /api/trading/health`
+
+Auth contract:
+
+- `POST /api/auth/login` prefers `{ identifier, password }`, where `identifier` may be an email or username.
+- Legacy login payloads using `{ username, password }` or `{ email, password }` remain supported for migration compatibility.
+- `POST /api/auth/register` supports the new email-first payload `{ email, password, display_name? }`.
 
 ## Docker
 
