@@ -8,7 +8,9 @@ FinGOAT (Financial Graph-Orchestrated Agentic Trading) is a polyglot monorepo wi
 
 - **frontend/** — React 19 + Vite SPA (TypeScript)
 - **backend/** — Go (Gin + GORM + PostgreSQL + Redis)
-- **langchain-v1/** — FastAPI microservice (async task orchestration)
+- **services/trading-service/** — FastAPI trading worker service
+- **services/market-data-service/** — FastAPI market-data service
+- **services/python-common/** — shared Python runtime modules
 - **TradingAgents/** — Core LangGraph multi-agent reasoning package (Python)
 
 ## Development Commands
@@ -44,12 +46,16 @@ go test ./controllers/...   # Run tests in a specific package
 ### Python Services
 ```bash
 # Trading Agent Service
-cd langchain-v1
-pip install -r requirements.txt
+cd services/trading-service
+pip install -r ../python-common/requirements.txt
 uvicorn trading_service:app --host 0.0.0.0 --port 8001 --reload  # Dev
 uvicorn trading_service:app --host 0.0.0.0 --port 8001           # Prod
 
-# TradingAgents package (install for langchain-v1 to use)
+# Market Data Service
+cd ../market-data-service
+uvicorn market_data_service:app --host 0.0.0.0 --port 8002 --reload
+
+# TradingAgents package
 cd TradingAgents
 pip install -e .
 ```
@@ -85,9 +91,13 @@ Browser → Nginx (:80) → Go Backend (:3000) → FastAPI (:8001) → TradingAg
 - `dataflows/` — Data providers: yfinance, alpha_vantage, news APIs, local cache
 - `default_config.py` — LLM provider, model, timeout, temperature, debate rounds
 
-### FastAPI Service (`langchain-v1/trading_service.py`)
+### Trading Worker (`services/trading-service/trading_service.py`)
 - Redis-backed async worker for task execution
 - Endpoints: `/health`, `/api/v1/analyze` (async), `/api/v1/analysis/{task_id}` (poll), `/api/v1/analyze/sync`
+
+### Market Data Service (`services/market-data-service/market_data_service.py`)
+- Internal chart / quote / terminal aggregation service
+- Endpoints: `/health`, `/api/v1/chart`, `/api/v1/quote`, `/api/v1/terminal`
 
 ### Nginx (`nginx/default.conf`)
 - `/api/` → Go backend (:3000)
@@ -109,7 +119,7 @@ All trading endpoints require JWT `Authorization: Bearer <token>`.
 
 ## Environment Configuration
 
-The Go backend uses Viper with `backend/config/config.yaml`. The FastAPI service uses `langchain-v1/.env` (copy from `.env.trading`).
+The Go backend uses Viper with `backend/config/config.yaml`. The FastAPI service uses `services/trading-service/.env` (copy from `.env.trading`).
 
 Key env variables for the Python service:
 - `LLM_PROVIDER` — `openai`, `anthropic`, `google`, `deepseek`, `ollama`

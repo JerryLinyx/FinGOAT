@@ -1,0 +1,211 @@
+# Task Backlog
+
+## P0
+
+- [ ] Build `Signal Ledger`: persist every final BUY/SELL/HOLD as a first-class signal and evaluate realized performance over `T+1 / T+5 / T+20`
+  - Record: `ADR-035`
+- [ ] Add signal scorecard views (win rate, average return, confidence calibration, market split, model/provider split)
+  - Record: `ADR-035`
+- [ ] Add agent attribution: record per-agent stance and connect it to eventual signal outcomes and token cost
+  - Record: `ADR-035`
+- [ ] Add smart routing / triage so low-value or low-data analyses do not always pay full multi-agent cost
+  - Record: `ADR-035`
+- [x] Redesign user table for v0.2 account evolution (`email` uniqueness, password hash semantics, profile fields, migration compatibility)
+  - Record: `ADR-020`
+  - Record: `ADR-027`
+- [x] Add email-based auth flow (register/login) with backward-compatible migration path for existing username users
+  - Record: `ADR-020`
+  - Record: `ADR-027` (Phase 1: email verification flow)
+- [x] Add email verification Phase 1 (verification token model, SMTP sender, verify endpoint, resend endpoint, frontend reminder banner)
+  - Record: `ADR-027`
+- [x] Allow profile email editing from the frontend account settings
+  - Record: `ADR-027`
+- [x] Reset `email_verified` and trigger a fresh verification flow when a user changes their email address
+  - Record: `ADR-031`
+- [x] Return `email_verified` in profile responses so the frontend verification banner reflects real state
+  - Record: `ADR-031`
+- [ ] Email verification Phase 2: password reset + Redis login rate limiting
+  - Record: `ADR-027`
+- [ ] Email verification Phase 3: refresh tokens + session management
+  - Record: `ADR-027`
+- [x] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
+  - Record: `ADR-021`
+  - Record: `ADR-026` (CORS dynamic, port convergence, nginx route removal)
+- [x] Restrict or deprecate Python public task endpoints (`/api/v1/analyze`, `/api/v1/analysis/{task_id}`) from production exposure
+  - Record: `ADR-021`
+  - Record: `ADR-026` (all endpoints marked deprecated=True)
+- [x] Redesign analysis task state lifecycle
+  - Record: `ADR-018`
+- [x] Define PostgreSQL and Redis boundary for task execution
+  - Record: `ADR-013`
+- [x] Replace weak Go/Python response parsing with typed contracts
+  - Record: `ADR-026` (Go-side validators for ticker, date, debate/risk rounds; aligned with Python Pydantic)
+- [x] Unify auth header contract and service-side validation behavior
+  - Record: `ADR-018`
+- [x] Add `qwen3.5-flash` as an Aliyun DashScope model preset for provider testing
+  - Record: `ADR-005`
+- [x] Make embedding defaults provider-aware so Aliyun runs do not fall back to OpenAI embeddings
+  - Record: `ADR-005`
+- [x] Extend provider-aware embedding routing so Ollama runs do not fall back to OpenAI embeddings
+  - Record: `ADR-008`
+- [x] Handle DashScope embedding input-length failures with retry-based fallback truncation
+  - Record: `ADR-005`
+- [ ] Verify end-to-end provider fidelity when Aliyun DashScope is selected (blocked by orphan tool-call bug)
+  - Record: `ADR-005`
+- [x] Fix DashScope tool-call orphan bug: sanitize assistant messages with unpaired `tool_calls` before DashScope API calls (affects GLM-4.7, kimi-k2.5, and any DashScope model that uses tools)
+  - Record: `ADR-024`
+  - Record: `ADR-025`
+  - Record: `ADR-026` (sanitize_orphan_tool_calls in conditional_logic.py)
+- [x] Sanitize LangChain message objects before persisting `analysis_report`
+  - Record: `ADR-005`
+- [x] Add a mock analysis pipeline testcase that runs the task lifecycle without real model or vendor calls
+  - Record: `ADR-006`
+- [x] Reconcile stale `pending/processing` tasks when Redis runtime state is missing
+  - Record: `ADR-013`
+- [x] Make `get_global_news` follow the configured news vendor and avoid implicit OpenAI fallback for `alpha_vantage`
+  - Record: `ADR-005`
+- [x] Separate worker Redis blocking reads from request Redis timeouts to avoid spurious socket timeout errors
+  - Record: `ADR-014`
+- [x] Expose worker liveness and auto-restart a dead trading worker thread
+  - Record: `ADR-014`
+- [x] Make Ollama with `gemma3:1b` the default provider/model across frontend and service defaults
+  - Record: `ADR-007`
+- [x] Add `execution_mode` and OpenClaw-backed analyst routing while preserving LangGraph as the main trading orchestrator
+  - Record: `ADR-010`
+- [x] Introduce a standalone OpenClaw gateway with per-user analyst registry and stage-run APIs
+  - Record: `ADR-010`
+
+## P1
+
+- [x] Add internal observability platform for per-task usage collection, per-user summaries, and admin global usage views
+  - Record: `ADR-029`
+- [x] Add first-pass user role model and admin-only route guard
+  - Record: `ADR-029`
+- [x] Backfill and normalize legacy user roles so existing accounts default to `user`
+  - Record: `ADR-029`
+- [x] Clear persisted usage rows on task resume and re-ingest terminal failed/cancelled task usage when needed
+  - Record: `ADR-029`
+- [x] Migrate agent memory from ephemeral ChromaDB to PostgreSQL + pgvector with user isolation and persistence
+  - Record: `ADR-030`
+- [x] Make pgvector migration capability-gated so non-pgvector PostgreSQL environments degrade gracefully instead of aborting backend startup
+  - Record: `ADR-031`
+- [x] Add user profile page and backend profile APIs (view/edit basic account information)
+  - Record: `ADR-020` (backend + frontend already implemented)
+- [x] Add user API key configuration page and secure backend contracts (provider-scoped key write/update without plaintext echo)
+  - Record: `ADR-020` (backend + frontend already implemented)
+- [x] Add chart query history panel (deduplicated symbol list, re-query pins symbol to top by recency)
+  - Record: `ADR-022`
+- [x] Add TradingAgents duplicate-run guard in dashboard: prompt confirmation when same user re-runs same symbol on same analysis date
+  - Record: `ADR-024`
+- [x] Remove stale frontend dev proxy path `/trading -> :8001` if frontend no longer calls Python APIs directly
+  - Record: `ADR-024`
+- [x] Add boundary regression checks to prevent reintroducing direct frontend->Python or Go->Python analyze-path coupling
+  - Record: `ADR-024`
+- [x] Add stage timing and key outputs to the mainline analysis response
+  - Record: `ADR-017`
+- [x] Add stage-based frontend analysis view
+  - Record: `ADR-017`
+- [x] Unify `US` and `A-share` chart terminal behind a dedicated Python `market-data-service` and keep Go as the public gateway
+  - Record: `ADR-032`
+- [x] Normalize `US` and `A-share` terminal contracts so pagination, MA/MACD, capability flags, and terminal shell behavior no longer diverge by market
+  - Record: `ADR-032`
+- [x] Preserve in-progress analysis visibility across logout/login and polling transitions
+  - Record: `ADR-017`
+- [x] Make recent analyses clickable so historical analysis details can be reopened
+  - Record: `ADR-017`
+- [x] Remove placeholder navigation and dead-end shell UI from the main app
+  - Record: `ADR-017`
+- [x] Persist processing-stage checkpoints so partial reports are visible before task completion
+  - Record: `ADR-012`
+- [x] Adopt async graph execution and parallelize independent analyst stages
+  - Record: `ADR-002`
+- [x] Make parallel analyst cleanup concurrency-safe to avoid duplicate message deletion during Ollama runs
+  - Record: `ADR-011`
+- [x] Degrade Ollama memory retrieval when embeddings are unavailable so research debate can continue
+  - Record: `ADR-009`
+- [x] Add terminate and continue controls for analysis tasks
+  - Record: `ADR-001`
+- [x] Make terminate/resume clean Redis queue state and prevent duplicate task payloads
+  - Record: `ADR-001`
+- [x] Promote stage-centric task responses (`stages`) to the primary frontend consumption model while keeping `analysis_report` transitional
+  - Record: `ADR-010`
+- [x] Define configuration precedence rules across Go, Python, and Docker
+- [x] Test backend endpoint with running service
+- [x] Test frontend chart rendering in browser
+
+## UI Refinements
+- [x] Match Dashboard sidebar width to OpenClaw (min 280px, max 360px)
+- [x] Replace pill-button splitter with 6px border drag strip
+- [x] Halve panel gaps in resizable layout (0.9rem -> 0.45rem)
+- [x] Add chart query history (localStorage + chips)
+- [x] Refactor frontend state boundaries for auth, article feed, and analysis
+- [x] Resolve OpenClaw runtime health/dependency contract so local available setups no longer report misleading degraded status
+  - Record: `ADR-010`
+- [x] Add a background scheduler for feed ingest (cron/worker) so feed freshness does not depend on manual refresh
+  - Record: `ADR-016`
+- [x] Connect OpenClaw Chat role binding with trading workflow execution config instead of keeping chat as isolated local MVP
+  - Record: `ADR-010`
+- [x] Add live token-level SSE streaming from LangGraph `astream_events` through Redis Streams, FastAPI `EventSourceResponse`, Go proxy, to frontend `EventSource` with `ReactMarkdown` rendering
+  - Record: `ADR-023`
+- [x] Add Agent Flow Graph tab in `AgentResultsModule` showing SVG DAG of the 9-stage pipeline with live node status coloring and edge animations
+  - Record: `ADR-023`
+- [x] Replace `processing-indicator` block with compact single-row `processing-bar`; compress `decision-card` to single-row flex layout
+  - Record: `ADR-023`
+- [x] Aggregate LLM token usage to stage-level analyst stats and show per-stage duration + token counts in analysis UI
+  - Record: `ADR-037`
+- [x] Fix the deprecated sync analysis debug endpoint so real provider validation can run without nested event-loop failure
+  - Record: `ADR-032`
+- [x] Verify `DashScope / qwen3.5-plus` real analysis runs populate live stage token and latency counters
+  - Record: `ADR-032`
+- [ ] Extend OpenClaw top-level analyst execution to report stage-level token usage, not just duration/status
+  - Related record: `ADR-037`
+- [ ] Flush usage events incrementally during long-running analysis tasks instead of only at terminal task completion
+  - Related record: `ADR-032`
+
+## P2
+
+- [ ] Evaluate selective adoption of fundamentals RAG
+  - Related branch review: `ADR-003`
+- [ ] Evaluate selective adoption of valuation analyst and structured analyst outputs
+- [x] Add RSS article refresh deduplication and batch backfill for unseen feed items
+  - Record: `ADR-016`
+- [x] Switch stock chart fetching to Alpha Vantage free-tier-compatible endpoints
+  - Record: `ADR-016`
+- [x] Redesign chart controls so bar interval and lookback window are not conflated
+  - Record: `ADR-016`
+- [x] Rework feed refresh into a smart DB-first refresh that only ingests RSS when the last successful sync is stale
+  - Record: `ADR-016`
+- [x] Track article ingest runs so feed refresh decisions and failures are auditable
+  - Record: `ADR-016`
+- [x] Normalize article payload fields in the feed UI so title/source/date render correctly after moving articles into Feed
+  - Record: `ADR-016`
+- [x] Remove misleading article sentiment tags from the feed UI when no sentiment pipeline exists
+  - Record: `ADR-016`
+- [x] Fix feed board pagination so reranked pages do not permanently skip items between cursors
+  - Record: `ADR-028`
+- [x] Invalidate feed board cache after preference, like, and save mutations
+  - Record: `ADR-028`
+- [x] Make Feed page unauthorized responses follow the shared session-expiry flow
+  - Record: `ADR-028`
+- [ ] Add vendor fetch deduplication and runtime caching for expensive data calls
+- [ ] Reduce prompt/context growth across analyst stages before promoting `qwen3.5-plus` style large-model runs to production defaults
+  - Related record: `ADR-032`
+- [ ] Restore full DashScope provider fidelity for embedding paths inside the trading container instead of falling back to OpenAI-compatible embeddings
+  - Related record: `ADR-032`
+- [x] Migrate ALPHA_VANTAGE_API_KEY from startup env var to per-user DB key (BYOK)
+  - Record: `ADR-025`
+- [x] Expose `alpha_vantage` in the user API-key list so the new frontend analysis gate is satisfiable
+  - Record: `ADR-025`
+  - Record: `ADR-031`
+- [x] Inject user LLM API keys server-side so Python never falls back to env vars
+  - Record: `ADR-025`
+- [x] Gate API mode provider dropdown by configured keys; clear all API provider model presets
+  - Record: `ADR-025`
+- [x] Add max tool-call iteration guard to analyst nodes (prevent infinite loop on DashScope models)
+  - Record: `ADR-025`
+- [x] Raise LLM timeout default from 60s to 300s to accommodate slow large models
+  - Record: `ADR-025`
+- [x] Inject JWT_SECRET and BYOK_ENCRYPTION_KEY into docker-compose with secure dev defaults; parameterize POSTGRES_PASSWORD
+  - Record: `ADR-026`
+- [x] Full-Docker local deployment validated: nginx sole external port, all API calls relative-path routed, frontend API_BASE_URL = '' correct
+  - Record: `ADR-026`

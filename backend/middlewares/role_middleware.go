@@ -6,7 +6,7 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// RequireAdmin rejects requests from non-admin users with 403.
+// RequireAdmin keeps RBAC intentionally minimal for now. See ADR-029.
 func RequireAdmin() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		role, exists := c.Get("user_role")

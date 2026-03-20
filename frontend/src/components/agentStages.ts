@@ -25,6 +25,12 @@ export type StageProgress = AgentStage & {
   content: unknown
   hasContent: boolean
   durationSeconds?: number
+  promptTokens?: number
+  completionTokens?: number
+  totalTokens?: number
+  llmCalls?: number
+  failedCalls?: number
+  latencyMs?: number
   backend?: string
   agentId?: string | null
   sessionKey?: string | null
@@ -107,6 +113,12 @@ const buildFromCanonicalStages = (stages: AnalysisStage[]): StageProgress[] => {
       content,
       hasContent: hasValue(content),
       durationSeconds: stage?.duration_seconds,
+      promptTokens: stage?.prompt_tokens,
+      completionTokens: stage?.completion_tokens,
+      totalTokens: stage?.total_tokens,
+      llmCalls: stage?.llm_calls,
+      failedCalls: stage?.failed_calls,
+      latencyMs: stage?.latency_ms,
       backend: stage?.backend,
       agentId: stage?.agent_id ?? null,
       sessionKey: stage?.session_key ?? null,
@@ -148,6 +160,12 @@ const buildFromLegacyReport = (task?: AnalysisTask | null): StageProgress[] => {
       content,
       hasContent,
       durationSeconds: stageTimes[reportKey],
+      promptTokens: undefined,
+      completionTokens: undefined,
+      totalTokens: undefined,
+      llmCalls: undefined,
+      failedCalls: undefined,
+      latencyMs: undefined,
       backend: stage.key && task?.execution_mode === 'openclaw' && ['market', 'social', 'news', 'fundamentals'].includes(stage.key) ? 'openclaw' : 'default',
       agentId: null,
       sessionKey: null,

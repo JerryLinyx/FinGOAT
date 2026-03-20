@@ -8,7 +8,9 @@ FinGOAT is a multi-service, multi-agent trading system:
 
 - `frontend` (React/Vite): user UI, login, article feeds, trading analysis panel
 - `backend` (Go/Gin): auth, data APIs, task persistence, gateway to Python service
-- `langchain-v1` (FastAPI): async analysis task API, wraps TradingAgents graph
+- `services/trading-service` (FastAPI): async analysis task API, wraps TradingAgents graph
+- `services/market-data-service` (FastAPI): chart / quote / terminal internal service
+- `services/python-common`: shared Python runtime modules
 - `TradingAgents` (Python package): core multi-agent reasoning and graph logic
 - `postgres` + `redis`: persistence and cache
 - `nginx`: reverse proxy entry
@@ -19,7 +21,8 @@ FinGOAT is a multi-service, multi-agent trading system:
 
 - `README.md` / `README-CN.md`: project overview and setup
 - `docker-compose.yml`: full local stack orchestration
-- `Dockerfile.trading`: Python trading service image
+- `services/trading-service/Dockerfile`: Python trading service image
+- `services/market-data-service/Dockerfile`: Python market-data service image
 - `nginx/`: external reverse proxy config
 - `k8s/`: Kubernetes manifests (deployment direction)
 
@@ -31,12 +34,20 @@ FinGOAT is a multi-service, multi-agent trading system:
 - `models/trading_analysis.go`: `trading_analysis_tasks` and `trading_decisions` schema
 - `config/`: Viper config, DB and Redis initialization
 
-### Python service (`langchain-v1/`)
+### Python services (`services/`)
 
-- `trading_service.py`: FastAPI endpoints, background execution, task state
-- `TRADING_SERVICE_README.md`: service-level API and operational notes
-- `test_trading_service.py`: service tests (local)
-- `eval_results/`: sample output logs (currently tracked in repo)
+- `trading-service/trading_service.py`: FastAPI endpoints, background execution, task state
+- `trading-service/README.md`: service-level API and operational notes
+- `trading-service/test_trading_service.py`: service tests (local)
+- `market-data-service/market_data_service.py`: chart / quote / terminal API
+- `python-common/marketdata/`: shared marketdata package
+- `python-common/json_safety.py`: JSON serialization helper
+- `python-common/usage_collector.py`: usage event collector
+
+### Legacy playground (`langchain-v1/`)
+
+- `app-langagents*` / `app-langgraph.py`: historical experiments
+- `eval_results/`: sample output logs retained for comparison
 
 ### Agent core (`TradingAgents/`)
 
@@ -80,7 +91,7 @@ FinGOAT is a multi-service, multi-agent trading system:
   - actual middleware parses raw token string from `Authorization`
   - choose one contract and align docs + frontend + middleware
 
-- Replace in-memory task store in `langchain-v1/trading_service.py`:
+- Replace in-memory task store in `services/trading-service/trading_service.py`:
   - `analysis_tasks` is process-local and non-durable
   - restarts lose in-flight state
   - recommend Redis-backed task state for production stability

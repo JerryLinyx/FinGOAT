@@ -75,6 +75,7 @@ class TradingAgentsGraph:
         selected_analysts=["market", "social", "news", "fundamentals"],
         debug=False,
         config: Dict[str, Any] = None,
+        usage_collector=None,
     ):
         """Initialize the trading agents graph and components.
 
@@ -85,6 +86,7 @@ class TradingAgentsGraph:
         """
         self.debug = debug
         self.config = config or DEFAULT_CONFIG
+        self.usage_collector = usage_collector
 
         # Update the interface's config
         set_config(self.config)
@@ -125,6 +127,7 @@ class TradingAgentsGraph:
             self.conditional_logic,
             self.config,
             OpenClawAnalystAdapter(self.config),
+            usage_collector=self.usage_collector,
         )
 
         self.propagator = Propagator()

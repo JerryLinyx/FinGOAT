@@ -42,7 +42,7 @@ docker compose up --build
 
 - [docs/local-dev-operations.md](./docs/local-dev-operations.md)
 - [backend/TRADING_API.md](./backend/TRADING_API.md)
-- [langchain-v1/TRADING_SERVICE_README.md](./langchain-v1/TRADING_SERVICE_README.md)
+- [services/trading-service/README.md](./services/trading-service/README.md)
 
 #### 界面展示
 **登录页面**

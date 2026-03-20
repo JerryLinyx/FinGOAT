@@ -117,19 +117,25 @@ type TradingDecisionPayload struct {
 }
 
 type AnalysisTaskStage struct {
-	StageID         string      `json:"stage_id"`
-	Label           string      `json:"label"`
-	Status          string      `json:"status"`
-	Backend         string      `json:"backend"`
-	Summary         string      `json:"summary,omitempty"`
-	Content         interface{} `json:"content,omitempty"`
-	AgentID         string      `json:"agent_id,omitempty"`
-	SessionKey      string      `json:"session_key,omitempty"`
-	RawOutput       interface{} `json:"raw_output,omitempty"`
-	StartedAt       string      `json:"started_at,omitempty"`
-	CompletedAt     string      `json:"completed_at,omitempty"`
-	DurationSeconds float64     `json:"duration_seconds,omitempty"`
-	Error           string      `json:"error,omitempty"`
+	StageID          string      `json:"stage_id"`
+	Label            string      `json:"label"`
+	Status           string      `json:"status"`
+	Backend          string      `json:"backend"`
+	Summary          string      `json:"summary,omitempty"`
+	Content          interface{} `json:"content,omitempty"`
+	AgentID          string      `json:"agent_id,omitempty"`
+	SessionKey       string      `json:"session_key,omitempty"`
+	RawOutput        interface{} `json:"raw_output,omitempty"`
+	StartedAt        string      `json:"started_at,omitempty"`
+	CompletedAt      string      `json:"completed_at,omitempty"`
+	DurationSeconds  float64     `json:"duration_seconds,omitempty"`
+	PromptTokens     int         `json:"prompt_tokens,omitempty"`
+	CompletionTokens int         `json:"completion_tokens,omitempty"`
+	TotalTokens      int         `json:"total_tokens,omitempty"`
+	LLMCalls         int         `json:"llm_calls,omitempty"`
+	FailedCalls      int         `json:"failed_calls,omitempty"`
+	LatencyMs        int         `json:"latency_ms,omitempty"`
+	Error            string      `json:"error,omitempty"`
 }
 
 type RuntimeTaskState struct {
@@ -445,6 +451,24 @@ func parseStagesFromReport(report map[string]interface{}) []AnalysisTaskStage {
 		if duration, ok := stageMap["duration_seconds"].(float64); ok {
 			stage.DurationSeconds = duration
 		}
+		if promptTokens, ok := toIntValue(stageMap["prompt_tokens"]); ok {
+			stage.PromptTokens = promptTokens
+		}
+		if completionTokens, ok := toIntValue(stageMap["completion_tokens"]); ok {
+			stage.CompletionTokens = completionTokens
+		}
+		if totalTokens, ok := toIntValue(stageMap["total_tokens"]); ok {
+			stage.TotalTokens = totalTokens
+		}
+		if llmCalls, ok := toIntValue(stageMap["llm_calls"]); ok {
+			stage.LLMCalls = llmCalls
+		}
+		if failedCalls, ok := toIntValue(stageMap["failed_calls"]); ok {
+			stage.FailedCalls = failedCalls
+		}
+		if latencyMs, ok := toIntValue(stageMap["latency_ms"]); ok {
+			stage.LatencyMs = latencyMs
+		}
 		parsed = append(parsed, stage)
 	}
 
@@ -456,6 +480,23 @@ func toStringValue(value interface{}) string {
 		return text
 	}
 	return ""
+}
+
+func toIntValue(value interface{}) (int, bool) {
+	switch typed := value.(type) {
+	case int:
+		return typed, true
+	case int32:
+		return int(typed), true
+	case int64:
+		return int(typed), true
+	case float64:
+		return int(typed), true
+	case float32:
+		return int(typed), true
+	default:
+		return 0, false
+	}
 }
 
 func buildDecisionFromStored(decision *models.TradingDecision) *TradingDecisionPayload {

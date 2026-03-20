@@ -29,6 +29,7 @@ class GraphSetup:
         conditional_logic: ConditionalLogic,
         config: Dict[str, Any],
         openclaw_adapter,
+        usage_collector=None,
     ):
         """Initialize with required components."""
         self.quick_thinking_llm = quick_thinking_llm
@@ -42,6 +43,7 @@ class GraphSetup:
         self.conditional_logic = conditional_logic
         self.config = config
         self.openclaw_adapter = openclaw_adapter
+        self.usage_collector = usage_collector
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -69,6 +71,7 @@ class GraphSetup:
             override = agent_backend_overrides.get(analyst_type)
             if isinstance(override, str) and override.strip():
                 return override.strip().lower()
+            # ADR-010 keeps LangGraph as the main orchestrator while allowing analyst-level OpenClaw routing.
             if execution_mode == "openclaw":
                 return "openclaw"
             return "default"
@@ -79,7 +82,7 @@ class GraphSetup:
 
             return node
 
-        _collector = self.config.get("usage_collector")
+        _collector = self.usage_collector
 
         if "market" in selected_analysts:
             analyst_nodes["market"] = create_market_analyst(

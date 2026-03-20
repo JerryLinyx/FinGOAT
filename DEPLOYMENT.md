@@ -10,7 +10,7 @@
 
 1. **Configure API Keys**
    ```bash
-   cd langchain-v1
+   cd services/trading-service
    cp .env.trading .env
    # Edit .env and fill in your API keys
    ```
@@ -93,7 +93,7 @@ docker-compose exec trading-service bash
    
    docker build -t $REGISTRY/fingoat-backend:$VERSION -f backend/Dockerfile backend/
    docker build -t $REGISTRY/fingoat-frontend:$VERSION -f frontend/Dockerfile frontend/
-   docker build -t $REGISTRY/fingoat-trading:$VERSION -f Dockerfile.trading .
+   docker build -t $REGISTRY/fingoat-trading:$VERSION -f services/trading-service/Dockerfile .
    
    docker push $REGISTRY/fingoat-backend:$VERSION
    docker push $REGISTRY/fingoat-frontend:$VERSION
@@ -193,7 +193,7 @@ kubectl get secret fingoat-secrets -n fingoat -o yaml
 
 ### Running Docker Compose on a GCP VM
 - Prep: install Docker & Compose, open port 80; ensure disk size or mount a data disk for DB persistence.
-- Secrets: create `langchain-v1/.env` on the VM (API keys), optionally export `POSTGRES_PASSWORD`, `FRONTEND_ORIGINS`, etc., to override defaults.
+- Secrets: create `services/trading-service/.env` on the VM (API keys), optionally export `POSTGRES_PASSWORD`, `FRONTEND_ORIGINS`, etc., to override defaults.
 - Start: `docker-compose up -d --build`; entry is `http://<VM public IP>` (Nginx 80 -> frontend/backend).
 - Health: `curl http://<VM public IP>/api/health` (backend); `curl http://<VM public IP>/trading/health` (trading service).
 - TLS: add cert paths in `nginx/default.conf` for 443, or terminate TLS via cloud load balancer.
@@ -247,7 +247,7 @@ helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring
 
 4. Configure secrets / env vars  
    ```bash
-   cd langchain-v1
+   cd services/trading-service
    cp .env.trading .env    # fill OPENAI_API_KEY / DASHSCOPE_API_KEY / ALPHA_VANTAGE_API_KEY etc.
    cd ..
 

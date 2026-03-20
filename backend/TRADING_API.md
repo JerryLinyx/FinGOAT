@@ -237,7 +237,7 @@ curl http://localhost:8080/api/trading/analysis/xyz-789 \
 
 ## Integration Notes
 
-1. **Python Service Must Be Running**: Ensure `trading_service.py` is running on port 8001
+1. **Python Service Must Be Running**: Ensure `services/trading-service/trading_service.py` is running on port 8001
 2. **Database**: PostgreSQL must be running (auto-migrates on startup)
 3. **Authentication**: All endpoints require valid JWT from `/api/auth/login`
 4. **CORS**: Frontend (localhost:5173) is whitelisted

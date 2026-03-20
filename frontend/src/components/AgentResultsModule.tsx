@@ -19,6 +19,12 @@ const formatDuration = (seconds?: number) => {
   return `${minutes}m ${remaining}s`
 }
 
+const formatTokens = (tokens?: number) => {
+  if (tokens === undefined) return ''
+  if (tokens < 1000) return `${tokens} tok`
+  return `${(tokens / 1000).toFixed(tokens >= 10_000 ? 0 : 1)}k tok`
+}
+
 // ── Markdown extraction from structured content ──────────────────────────────
 
 const PRIORITY_KEYS = [
@@ -93,7 +99,12 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
   const totalCount = stages.length
   const progressPct = totalCount > 0 ? (completedCount / totalCount) * 100 : 0
 
-  const detailMeta = [activeStage.backend, activeStage.durationSeconds !== undefined ? formatDuration(activeStage.durationSeconds) : null]
+  const detailMeta = [
+    activeStage.backend,
+    activeStage.durationSeconds !== undefined ? formatDuration(activeStage.durationSeconds) : null,
+    activeStage.totalTokens !== undefined ? formatTokens(activeStage.totalTokens) : null,
+    activeStage.llmCalls !== undefined ? `${activeStage.llmCalls} calls` : null,
+  ]
     .filter(Boolean)
     .join(' · ')
 
@@ -165,6 +176,9 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
                 {stage.durationSeconds !== undefined && (
                   <div className="agent-stage-card__duration">{formatDuration(stage.durationSeconds)}</div>
                 )}
+                {stage.totalTokens !== undefined && (
+                  <div className="agent-stage-card__duration">{formatTokens(stage.totalTokens)}</div>
+                )}
                 <div className="agent-stage-card__summary">
                   {/* Show live token snippet if this stage is streaming */}
                   {stage.key === activeStage.key && isStreaming
@@ -183,6 +197,13 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
               </h4>
               {detailMeta && <span className="agent-stage-detail__duration">{detailMeta}</span>}
             </div>
+            {(activeStage.promptTokens !== undefined || activeStage.completionTokens !== undefined) && (
+              <div className="agent-stage-detail__duration">
+                in {activeStage.promptTokens ?? 0} · out {activeStage.completionTokens ?? 0}
+                {activeStage.failedCalls ? ` · ${activeStage.failedCalls} failed` : ''}
+                {activeStage.latencyMs !== undefined ? ` · ${Math.round(activeStage.latencyMs / 1000)}s model latency` : ''}
+              </div>
+            )}
             <div className="agent-stage-detail__content">
               {finalMarkdown ? (
                 <div className="stage-markdown-content">
@@ -214,6 +235,13 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
                 </h4>
                 {detailMeta && <span className="agent-stage-detail__duration">{detailMeta}</span>}
               </div>
+              {(activeStage.promptTokens !== undefined || activeStage.completionTokens !== undefined) && (
+                <div className="agent-stage-detail__duration">
+                  in {activeStage.promptTokens ?? 0} · out {activeStage.completionTokens ?? 0}
+                  {activeStage.failedCalls ? ` · ${activeStage.failedCalls} failed` : ''}
+                  {activeStage.latencyMs !== undefined ? ` · ${Math.round(activeStage.latencyMs / 1000)}s model latency` : ''}
+                </div>
+              )}
               <div className="agent-stage-detail__content">
                 {finalMarkdown ? (
                   <div className="stage-markdown-content">

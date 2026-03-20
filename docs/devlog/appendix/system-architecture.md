@@ -1,6 +1,12 @@
+---
+title: System Architecture
+last_verified: 2026-03-19
+verified_against: v0.2.0-dev
+---
+
 # System Architecture
 
-本文档描述当前主线架构（基线 `v0.1.2`）以及 `v0.2.0` 的收敛方向。
+本文档描述当前主线架构（`v0.2.0` 进行中，基线归档为 `v0.1.4`）以及后续收敛方向。
 
 ## 1. 当前架构总览
 
@@ -10,9 +16,10 @@
 
 - 表现层：`frontend`
 - 编排层：`backend`
-- 能力层：`langchain-v1` 和 `TradingAgents`
+- 能力层：`services/trading-service`、`services/market-data-service`、`services/python-common` 和 `TradingAgents`
 - 数据层：`PostgreSQL` 和 `Redis`
 - 外部依赖层：LLM、金融数据源、RSS
+- 本地扩展层：OpenClaw gateway、Ollama、本地浏览器状态
 
 ## 2. 当前协作方式
 
@@ -25,6 +32,20 @@
 5. Python 在执行过程中持续写回 runtime checkpoint（含阶段输出）。
 6. Go 在查询阶段对账 Redis runtime 与 PostgreSQL，终态写回决策与结果。
 7. 前端轮询 Go 并展示进度/阶段输出/最终结果。
+
+### 用户配置链路
+
+1. 用户在前端 Profile 页面维护基础资料和 provider key。
+2. Go backend 负责鉴权、邮箱验证流程、API key 加密存储。
+3. Trading 请求进入 Go 后端时，按用户配置注入 provider key / 覆盖默认配置。
+4. Python worker 与 TradingAgents 使用解析后的 provider 配置执行。
+
+### 市场数据链路
+
+1. 前端调用 Go 的 chart / quote / terminal 接口。
+2. Go 负责鉴权、市场模式解析、响应归一化。
+3. Python marketdata service 或 backend controller 拉取外部行情/公告/终端侧栏数据。
+4. 前端在 Chart / Terminal 页面展示结果并保留本地查询历史。
 
 ### 文章链路
 
@@ -62,6 +83,8 @@
 - Redis 已承担任务队列和运行态协调，而非仅缓存。
 - TradingAgents 独立为能力引擎层，便于迭代模型和策略逻辑。
 - 前端已可消费阶段元数据，具备基础可解释性。
+- 用户配置与 provider key 已进入产品主路径，不再完全依赖环境变量。
+- usage 事件链路已形成“执行采集 -> Redis 暂存 -> PostgreSQL 汇总”的基本闭环。
 
 ## 5. 当前不合理之处
 
@@ -77,6 +100,11 @@
 
 - Go/Python/Docker 多来源配置叠加，优先级治理不足。
 
+### 用户域仍在兼容迁移期
+
+- email-first 已落地，但 legacy username 仍保留兼容路径。
+- 手机号 / 微信等多通道身份尚未进入统一设计。
+
 ## 6. v0.2.0 目标架构方向
 
 ### 目标边界
@@ -87,6 +115,7 @@
 - PostgreSQL：持久业务真相源。
 - Python Trading Service：内部执行器 / worker。
 - TradingAgents：分析引擎。
+- OpenClaw gateway：可选本地/远程 analyst runtime 辅助层，不与 Go 争夺外部产品边界。
 
 ### 目标收益
 
@@ -97,4 +126,4 @@
 
 ## 7. 版本判断
 
-`v0.1.2` 已具备工程化 MVP 基础骨架。`v0.2.0` 的重点应放在边界收敛、契约收紧、配置治理、后台调度和回归闭环，而不是继续扩散接口层职责。
+`v0.1.2` 提供了工程化 MVP 基础骨架。当前主线已经进入 `v0.2.0` 进行中阶段，重点应继续放在边界收敛、契约收紧、配置治理、后台调度和回归闭环，而不是继续扩散接口层职责。

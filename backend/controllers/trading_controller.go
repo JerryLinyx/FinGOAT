@@ -15,6 +15,7 @@ import (
 )
 
 const defaultTradingServiceURL = "http://localhost:8001"
+const defaultMarketDataServiceURL = "http://localhost:8002"
 const defaultOpenClawGatewayURL = "http://localhost:8011"
 
 var tradingServiceURL = func() string {
@@ -22,6 +23,13 @@ var tradingServiceURL = func() string {
 		return strings.TrimRight(v, "/")
 	}
 	return defaultTradingServiceURL
+}()
+
+var marketDataServiceURL = func() string {
+	if v := os.Getenv("MARKET_DATA_SERVICE_URL"); v != "" {
+		return strings.TrimRight(v, "/")
+	}
+	return defaultMarketDataServiceURL
 }()
 
 var openClawGatewayURL = func() string {
@@ -166,7 +174,7 @@ func RequestAnalysis(c *gin.Context) {
 		return
 	}
 
-	// Create database record
+	// Go remains the durable task owner and queue entrypoint. See ADR-013, ADR-018, and ADR-021.
 	task := models.TradingAnalysisTask{
 		UserID:        userID.(uint),
 		TaskID:        taskID,

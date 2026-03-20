@@ -1,15 +1,38 @@
+---
+title: Data Models
+last_verified: 2026-03-19
+verified_against: v0.2.0-dev
+---
+
 # Data Models
 
-本文档整理当前主线（`v0.1.2`）核心数据、来源、生命周期和主要流转链路。
+本文档整理当前主线（`v0.2.0` 进行中）核心数据、来源、生命周期和主要流转链路。
 
 ## 1. 核心业务数据
 
 ### User
 
 - 来源：前端注册/登录
-- 关键字段：`username`、`password(hash)`
+- 关键字段：`username`、`password_hash`、`email`、`email_verified`、`display_name`、`avatar_url`、`role`
 - 存储：PostgreSQL
 - 生命周期：长期
+- 当前状态：已从最小用户名模型扩展到 email-first 兼容 profile 模型
+
+### UserAPIKey
+
+- 来源：Profile 页面 API key 配置
+- 关键字段：`user_id/provider/encrypted_key/key_mask`
+- 存储：PostgreSQL
+- 生命周期：长期
+- 用途：按用户注入 provider key，替代纯运维级统一密钥
+
+### EmailToken
+
+- 来源：注册验证、重发验证、邮箱变更
+- 关键字段：`user_id/token_hash/purpose/expires_at/used_at`
+- 存储：PostgreSQL
+- 生命周期：短中期
+- 用途：email verification 流程
 
 ### Article
 
@@ -47,6 +70,17 @@
 - 存储：PostgreSQL
 - 生命周期：长期
 
+### LLMUsageEvent / AnalysisRunMetrics
+
+- 来源：analysis 运行阶段的 usage collector
+- 关键字段：
+  - `provider/model/node_name/prompt_tokens/completion_tokens/total_tokens`
+  - `estimated_cost_usd/latency_ms/success/error_message`
+  - 任务级汇总字段如 `total_tokens/total_cost/total_llm_calls`
+- 存储：PostgreSQL
+- 生命周期：长期
+- 用途：用户 usage 页面、admin dashboard、成本分析
+
 ## 2. 运行时数据
 
 ### 任务运行态（runtime state）
@@ -78,6 +112,16 @@
   - 执行期在 Redis runtime
   - 终态部分持久化入 PostgreSQL 决策记录
 
+### Chart / Quote / Terminal 本地视图状态
+
+- 来源：前端图表与 terminal 页面操作
+- 关键形态：
+  - recent queries（本地历史）
+  - selected market / period / indicator state
+- 存储：浏览器 localStorage / 组件本地状态
+- 生命周期：本地会话级或持久本地
+- 当前限制：尚无跨端同步
+
 ## 3. 外部数据
 
 ### Vendor 数据
@@ -93,6 +137,16 @@
 - 关键字段：stage backend、agent id、session key、raw output
 - 生命周期：任务运行期
 - 当前问题：部署依赖和健康契约仍在收敛
+
+### Market data response objects
+
+- 来源：Go backend market-data controllers + Python marketdata service
+- 关键形态：
+  - `chart`
+  - `quote`
+  - `terminal`
+- 生命周期：短周期缓存 + 请求时拉取
+- 当前问题：provider fallback 与缓存治理还在持续打磨
 
 ## 4. 数据处理链路
 
@@ -117,6 +171,7 @@
 - Go/Python 跨服务 schema 仍有动态区域。
 - vendor 数据缺少统一 runtime 缓存与去重策略。
 - feed 仍缺后台定时 ingest（目前以 smart refresh + manual 为主）。
+- 用户域仍处于兼容迁移期，身份与配置相关模型需要继续治理。
 
 ## 6. 未来需要统一或重构的数据结构
 
@@ -125,3 +180,4 @@
 - Go/Python 契约强类型化
 - vendor 缓存 key + TTL + 去重策略
 - feed 定时任务与 ingest run 生命周期策略
+- 用户 API key 审计字段与更多 provider 元数据

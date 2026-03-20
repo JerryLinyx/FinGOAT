@@ -20,9 +20,9 @@ fi
 echo "[2/3] Configuring environment..."
 cd "$ROOT_DIR"
 
-ENV_FILE="./langchain-v1/.env"
+ENV_FILE="./services/trading-service/.env"
 if [ ! -f "$ENV_FILE" ]; then
-  cp ./langchain-v1/.env.trading "$ENV_FILE"
+  cp ./services/trading-service/.env.trading "$ENV_FILE"
   echo "Created .env from template."
 fi
 

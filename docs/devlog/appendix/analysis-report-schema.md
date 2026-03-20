@@ -1,6 +1,12 @@
+---
+title: Analysis Report Schema
+last_verified: 2026-03-19
+verified_against: v0.2.0-dev
+---
+
 # Analysis Report Schema
 
-## Current shape (v0.1.2)
+## Current shape (`v0.2.0` in progress)
 
 当前任务响应存在两层阶段数据：
 

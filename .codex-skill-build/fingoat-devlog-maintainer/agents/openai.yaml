@@ -1,0 +1,4 @@
+interface:
+  display_name: "FinGOAT Devlog"
+  short_description: "Maintain FinGOAT devlog state and ADR traceability."
+  default_prompt: "Use $fingoat-devlog-maintainer to update FinGOAT devlog after a bug fix, feature delivery, or version closeout."

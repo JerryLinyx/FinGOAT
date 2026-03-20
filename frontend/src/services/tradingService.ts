@@ -36,6 +36,12 @@ export interface AnalysisStage {
     started_at?: string | null
     completed_at?: string | null
     duration_seconds?: number
+    prompt_tokens?: number
+    completion_tokens?: number
+    total_tokens?: number
+    llm_calls?: number
+    failed_calls?: number
+    latency_ms?: number
     error?: string | null
 }
 
@@ -124,7 +130,22 @@ export interface ChartTerminalMetric {
     value: string
 }
 
-export interface ChartTerminalResponse {
+export interface ChartDebugMeta {
+    source: string
+    fallback_used?: string | null
+    cache_status: string
+    stale: boolean
+    fetched_at: string
+}
+
+export interface ChartSeriesResponse extends ChartDebugMeta {
+    ticker: string
+    market?: MarketMode
+    range: string
+    data: OHLCVPoint[]
+}
+
+export interface ChartTerminalResponse extends ChartDebugMeta {
     ticker: string
     market: MarketMode
     name: string
@@ -150,9 +171,12 @@ export interface ChartTerminalResponse {
     }
     capabilities: ChartTerminalCapabilities
     partial: boolean
+    has_more_left: boolean
+    oldest_date?: string | null
+    newest_date?: string | null
 }
 
-export interface ChartQuoteResponse {
+export interface ChartQuoteResponse extends ChartDebugMeta {
     ticker: string
     market: MarketMode
     name: string
@@ -326,7 +350,7 @@ class TradingService {
         throw new Error('Analysis timeout - please check status manually')
     }
 
-    async getStockChart(ticker: string, range: string = '3m', market: MarketMode = 'us'): Promise<{ ticker: string; market?: MarketMode; range: string; data: OHLCVPoint[] }> {
+    async getStockChart(ticker: string, range: string = '3m', market: MarketMode = 'us'): Promise<ChartSeriesResponse> {
         const response = await fetch(`${API_BASE_URL}/api/trading/chart/${encodeURIComponent(ticker)}?range=${range}&market=${market}`, {
             headers: this.getAuthHeaders(),
         })
@@ -339,8 +363,12 @@ class TradingService {
         return response.json()
     }
 
-    async getTerminal(ticker: string, market: MarketMode, period: TerminalPeriod): Promise<ChartTerminalResponse> {
-        const response = await fetch(`${API_BASE_URL}/api/trading/terminal/${encodeURIComponent(ticker)}?market=${market}&period=${period}`, {
+    async getTerminal(ticker: string, market: MarketMode, period: TerminalPeriod, before?: string): Promise<ChartTerminalResponse> {
+        const params = new URLSearchParams({ market, period })
+        if (before) {
+            params.set('before', before)
+        }
+        const response = await fetch(`${API_BASE_URL}/api/trading/terminal/${encodeURIComponent(ticker)}?${params.toString()}`, {
             headers: this.getAuthHeaders(),
         })
 

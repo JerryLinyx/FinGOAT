@@ -10,7 +10,7 @@
 
 1. **配置 API Keys**
    ```bash
-   cd langchain-v1
+   cd services/trading-service
    cp .env.trading .env
    # 编辑 .env 文件，填入你的 API keys
    ```
@@ -96,7 +96,7 @@ docker-compose exec trading-service bash
    # 构建镜像
    docker build -t $REGISTRY/fingoat-backend:$VERSION -f backend/Dockerfile backend/
    docker build -t $REGISTRY/fingoat-frontend:$VERSION -f frontend/Dockerfile frontend/
-   docker build -t $REGISTRY/fingoat-trading:$VERSION -f Dockerfile.trading .
+   docker build -t $REGISTRY/fingoat-trading:$VERSION -f services/trading-service/Dockerfile .
    
    # 推送到镜像仓库
    docker push $REGISTRY/fingoat-backend:$VERSION
@@ -250,7 +250,7 @@ kubectl get secret fingoat-secrets -n fingoat -o yaml
 ### 在 GCP VM 上运行 Docker Compose
 
 - 准备：安装 Docker & Docker Compose，开放 80 端口；如果要持久化数据库，确保 VM 磁盘大小充足或挂载独立数据盘。
-- Secrets：在 VM 上创建 `langchain-v1/.env`（包含各 API Key），并按需导出 `POSTGRES_PASSWORD`、`FRONTEND_ORIGINS` 等环境变量以覆盖默认值。
+- Secrets：在 VM 上创建 `services/trading-service/.env`（包含各 API Key），并按需导出 `POSTGRES_PASSWORD`、`FRONTEND_ORIGINS` 等环境变量以覆盖默认值。
 - 启动：`docker-compose up -d --build`；入口为 `http://<VM 公网 IP>`（Nginx 80 -> 前端/后端）。
 - 健康检查：`curl http://<VM 公网 IP>/api/health` 验证后端；`curl http://<VM 公网 IP>/trading/health` 验证 Trading 服务。
 - TLS：可在 `nginx/default.conf` 加入证书路径启用 443，或用 Cloud Load Balancer 终结 TLS。
@@ -323,7 +323,7 @@ helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring
 
 4. 配置 Secrets / 环境变量  
    ```bash
-   cd langchain-v1
+   cd services/trading-service
    cp .env.trading .env           # 如无则复制模板
    # 编辑 .env 填写 OPENAI_API_KEY / DASHSCOPE_API_KEY / ALPHA_VANTAGE_API_KEY 等
    cd ..

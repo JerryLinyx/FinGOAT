@@ -181,6 +181,11 @@
   color: rgba(255,255,255,0.56);
 }
 
+.chart-terminal-quote__status {
+  font-size: 0.76rem;
+  color: rgba(255,255,255,0.7);
+}
+
 .chart-terminal-quote__price {
   display: flex;
   flex-direction: column;
@@ -256,6 +261,13 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 0.1rem 0.2rem 0.95rem;
+}
+
+.chart-terminal-board__flags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
 }
 
 .chart-terminal-board__header h3 {

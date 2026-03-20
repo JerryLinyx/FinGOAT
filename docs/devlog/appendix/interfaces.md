@@ -1,6 +1,12 @@
+---
+title: Interfaces
+last_verified: 2026-03-19
+verified_against: v0.2.0-dev
+---
+
 # Interfaces
 
-本文档整理当前主线（`v0.1.2`）关键接口、调用关系、状态管理方式和后续演进方向。
+本文档整理当前主线（`v0.2.0` 进行中）关键接口、调用关系、状态管理方式和后续演进方向。
 
 ## 1. Frontend -> Go Backend
 
@@ -8,6 +14,16 @@
 
 - `POST /api/auth/login`
 - `POST /api/auth/register`
+- `GET /api/user/profile`
+- `PUT /api/user/profile`
+- `POST /api/auth/verify-email`
+- `POST /api/auth/resend-verification`
+- `GET /api/user/api-keys`
+- `PUT /api/user/api-keys/:provider`
+- `DELETE /api/user/api-keys/:provider`
+- `GET /api/usage/summary`
+- `GET /api/admin/usage/summary`
+- `GET /api/admin/usage/users`
 - `GET /api/articles`
 - `GET /api/articles?refresh=true`（smart refresh）
 - `GET /api/articles/refresh`（force ingest）
@@ -19,6 +35,9 @@
 - `GET /api/trading/stats`
 - `GET /api/trading/health`
 - `GET /api/trading/chart/:ticker`
+- `GET /api/trading/quote/:ticker`
+- `GET /api/trading/terminal/:ticker`
+- `GET /api/trading/ollama/models`
 
 ### 调用方 / 被调用方
 
@@ -52,12 +71,14 @@
 - token 存在浏览器 localStorage
 - 分析结果靠前端轮询 Go 获取
 - 前端优先消费 `stages`，回退到 `analysis_report`
+- 用户 API key 经 Go 后端加密存储，不回显明文
 
 ### 当前问题
 
 - 错误模型仍未完全统一
 - Go/Python 动态 JSON 区域仍有 schema 漂移风险
 - OpenClaw chat 仍是前端本地直连形态，不是统一产品 API 边界
+- 用户域仍有 email-first / legacy username 兼容并存状态
 
 ### 后续演进方向
 
@@ -72,6 +93,7 @@
 - `trading:analysis:queue`
 - `trading:analysis:processing`
 - `trading:analysis:runtime:{task_id}`
+- `usage:events:{task_id}`
 
 ### 状态管理方式
 
@@ -83,6 +105,7 @@
 ### 当前问题
 
 - 对账修复主要由请求触发，后台 sweeper 尚未统一
+- usage 暂存与终态持久化依赖任务完成后的异步 ingestion
 
 ## 3. Python Trading Service <-> Redis（执行运行时）
 
@@ -91,6 +114,7 @@
 - 阻塞消费队列
 - 写运行态与阶段 checkpoint
 - 写终态结果（含 `stages` 与 `analysis_report`）
+- 写 usage event 并在终态阶段触发持久化
 - worker 健康与自恢复
 
 ### 当前问题
@@ -139,6 +163,7 @@
 ### 当前问题
 
 - vendor 级去重、缓存、限流治理仍需系统化
+- chart/quote/terminal 数据链路与 TradingAgents 分析链路仍是分层并行，而非统一 vendor cache
 
 ## 7. 协议选择说明
 

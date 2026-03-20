@@ -69,6 +69,32 @@ type redisUsageEvent struct {
 	RequestCompletedAt string `json:"request_completed_at"`
 }
 
+var usageNodeStageMap = map[string]string{
+	"Market Analyst":       "market",
+	"Social Analyst":       "social",
+	"News Analyst":         "news",
+	"Fundamentals Analyst": "fundamentals",
+	"Bull Researcher":      "research_debate",
+	"Bear Researcher":      "research_debate",
+	"Research Manager":     "portfolio_manager",
+	"Trader":               "trader_plan",
+	"Risky Analyst":        "risk_debate",
+	"Neutral Analyst":      "risk_debate",
+	"Safe Analyst":         "risk_debate",
+	"Risk Judge":           "risk_management",
+}
+
+type usageStageBreakdown struct {
+	StageID          string   `json:"stage_id"`
+	PromptTokens     int      `json:"prompt_tokens"`
+	CompletionTokens int      `json:"completion_tokens"`
+	TotalTokens      int      `json:"total_tokens"`
+	LLMCalls         int      `json:"llm_calls"`
+	FailedCalls      int      `json:"failed_calls"`
+	LatencyMs        int      `json:"latency_ms"`
+	EstimatedCostUSD *float64 `json:"estimated_cost_usd,omitempty"`
+}
+
 func usageEventsKey(taskID string) string {
 	return "usage:events:" + taskID
 }
@@ -272,10 +298,56 @@ func GetTaskUsageDetail(c *gin.Context) {
 	var runMetrics models.AnalysisRunMetrics
 	global.DB.Where("task_id = ? AND user_id = ?", taskID, uid).First(&runMetrics)
 
+	byStageMap := map[string]*usageStageBreakdown{}
+	for _, event := range events {
+		stageID, ok := usageNodeStageMap[event.NodeName]
+		if !ok {
+			continue
+		}
+		row := byStageMap[stageID]
+		if row == nil {
+			row = &usageStageBreakdown{StageID: stageID}
+			byStageMap[stageID] = row
+		}
+		row.PromptTokens += event.PromptTokens
+		row.CompletionTokens += event.CompletionTokens
+		row.TotalTokens += event.TotalTokens
+		row.LLMCalls++
+		row.LatencyMs += event.LatencyMs
+		if !event.Success {
+			row.FailedCalls++
+		}
+		if event.EstimatedCostUSD != nil {
+			if row.EstimatedCostUSD == nil {
+				value := 0.0
+				row.EstimatedCostUSD = &value
+			}
+			*row.EstimatedCostUSD += *event.EstimatedCostUSD
+		}
+	}
+
+	byStage := make([]usageStageBreakdown, 0, len(byStageMap))
+	for _, stageID := range []string{
+		"market",
+		"social",
+		"news",
+		"fundamentals",
+		"research_debate",
+		"portfolio_manager",
+		"trader_plan",
+		"risk_debate",
+		"risk_management",
+	} {
+		if row, ok := byStageMap[stageID]; ok {
+			byStage = append(byStage, *row)
+		}
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"task_id":     taskID,
 		"events":      events,
 		"run_metrics": runMetrics,
+		"by_stage":    byStage,
 	})
 }
 

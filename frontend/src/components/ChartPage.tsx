@@ -48,6 +48,11 @@ interface ChartBundle {
     valueByDate: Map<string, number>
 }
 
+interface LogicalRange {
+    from: number
+    to: number
+}
+
 function sanitizeTickerInput(value: string, market: MarketMode): string {
     if (market === 'cn') {
         return value.replace(/\D/g, '').slice(0, 6)
@@ -138,6 +143,11 @@ function quoteTone(quote?: ChartQuoteResponse | null): 'up' | 'down' | 'flat' {
     return 'flat'
 }
 
+function humanizeCacheStatus(value?: string | null): string {
+    if (!value) return 'MISS'
+    return value.replace(/_/g, ' ').toUpperCase()
+}
+
 function buildValueMap(points: Array<{ date: string; value?: number; close?: number; volume?: number }>, key: 'value' | 'close' | 'volume'): Map<string, number> {
     const map = new Map<string, number>()
     for (const point of points) {
@@ -147,6 +157,45 @@ function buildValueMap(points: Array<{ date: string; value?: number; close?: num
         }
     }
     return map
+}
+
+function mergeSeriesByDate<T extends { date: string }>(older: T[], newer: T[]): T[] {
+    const merged = new Map<string, T>()
+    for (const point of older) {
+        merged.set(point.date, point)
+    }
+    for (const point of newer) {
+        merged.set(point.date, point)
+    }
+    return Array.from(merged.values()).sort((left, right) => left.date.localeCompare(right.date))
+}
+
+function mergeTerminalHistory(current: ChartTerminalResponse, older: ChartTerminalResponse): ChartTerminalResponse {
+    return {
+        ...current,
+        chart: mergeSeriesByDate(older.chart, current.chart),
+        indicators: {
+            ma: {
+                ma5: mergeSeriesByDate(older.indicators.ma.ma5, current.indicators.ma.ma5),
+                ma10: mergeSeriesByDate(older.indicators.ma.ma10, current.indicators.ma.ma10),
+                ma20: mergeSeriesByDate(older.indicators.ma.ma20, current.indicators.ma.ma20),
+                ma60: mergeSeriesByDate(older.indicators.ma.ma60, current.indicators.ma.ma60),
+            },
+            macd: {
+                dif: mergeSeriesByDate(older.indicators.macd.dif, current.indicators.macd.dif),
+                dea: mergeSeriesByDate(older.indicators.macd.dea, current.indicators.macd.dea),
+                hist: mergeSeriesByDate(older.indicators.macd.hist, current.indicators.macd.hist),
+            },
+        },
+        has_more_left: older.has_more_left,
+        oldest_date: older.oldest_date ?? current.oldest_date,
+        newest_date: current.newest_date ?? older.newest_date,
+        source: current.source,
+        fallback_used: current.fallback_used,
+        cache_status: current.cache_status,
+        stale: current.stale,
+        fetched_at: current.fetched_at,
+    }
 }
 
 function getLayoutColors() {
@@ -170,6 +219,7 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
     const [market, setMarket] = useState<MarketMode>(loadMarket)
     const [period, setPeriod] = useState<TerminalPeriod>(loadPeriod)
     const [loading, setLoading] = useState(false)
+    const [loadingMoreHistory, setLoadingMoreHistory] = useState(false)
     const [quoteRefreshing, setQuoteRefreshing] = useState(false)
     const [error, setError] = useState('')
     const [terminal, setTerminal] = useState<ChartTerminalResponse | null>(null)
@@ -182,11 +232,33 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
     const chartBundlesRef = useRef<Partial<Record<'main' | 'volume' | 'macd', ChartBundle>>>({})
     const syncingRangeRef = useRef(false)
     const syncingCrosshairRef = useRef(false)
+    const pendingVisibleRangeRef = useRef<LogicalRange | null>(null)
+    const loadingMoreHistoryRef = useRef(false)
 
     const capabilities: ChartTerminalCapabilities | null = terminal?.capabilities ?? null
     const chartPoints = terminal?.chart ?? []
     const activePeriodLabel = useMemo(() => PERIOD_OPTIONS.find(option => option.id === period)?.label ?? '日K', [period])
     const tone = quoteTone(quote)
+    const quoteStatusLine = useMemo(() => {
+        if (!quote) return null
+        const parts = [quote.stale ? 'Delayed' : 'Live', humanizeCacheStatus(quote.cache_status), quote.source]
+        if (quote.fallback_used) {
+            parts.push(`fallback ${quote.fallback_used}`)
+        }
+        return parts.join(' · ')
+    }, [quote])
+    const terminalStatusFlags = useMemo(() => {
+        if (!terminal) return []
+        const flags: string[] = []
+        if (terminal.partial) flags.push('Partial data')
+        if (terminal.stale) flags.push('Delayed')
+        flags.push(humanizeCacheStatus(terminal.cache_status))
+        flags.push(terminal.source)
+        if (terminal.fallback_used) {
+            flags.push(`fallback ${terminal.fallback_used}`)
+        }
+        return flags
+    }, [terminal])
 
     const fetchQuote = useCallback(async (tickerValue: string, marketValue: MarketMode, markLoading = false) => {
         if (!tickerValue.trim()) return
@@ -212,6 +284,9 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
         if (!formattedTicker) return
 
         setLoading(true)
+        setLoadingMoreHistory(false)
+        loadingMoreHistoryRef.current = false
+        pendingVisibleRangeRef.current = null
         setError('')
         try {
             const [terminalResult, quoteResult] = await Promise.all([
@@ -238,6 +313,42 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
             setLoading(false)
         }
     }, [market, onSessionExpired])
+
+    const loadOlderHistory = useCallback(async () => {
+        if (loadingMoreHistoryRef.current || !terminal?.has_more_left || !terminal.oldest_date || !activeTicker) {
+            return
+        }
+
+        const currentRange = chartBundlesRef.current.main?.chart.timeScale().getVisibleLogicalRange() as LogicalRange | null
+        loadingMoreHistoryRef.current = true
+        setLoadingMoreHistory(true)
+        try {
+            const older = await tradingService.getTerminal(activeTicker, market, period, terminal.oldest_date)
+            if (!older.chart.length) {
+                setTerminal(prev => prev ? { ...prev, has_more_left: false } : prev)
+                return
+            }
+
+            setTerminal(prev => {
+                if (!prev) return older
+                const merged = mergeTerminalHistory(prev, older)
+                const addedCount = merged.chart.length - prev.chart.length
+                if (currentRange && addedCount > 0) {
+                    pendingVisibleRangeRef.current = {
+                        from: currentRange.from + addedCount,
+                        to: currentRange.to + addedCount,
+                    }
+                }
+                return merged
+            })
+        } catch (err) {
+            const message = err instanceof Error ? err.message : 'Failed to load more history'
+            setError(message)
+        } finally {
+            loadingMoreHistoryRef.current = false
+            setLoadingMoreHistory(false)
+        }
+    }, [activeTicker, market, period, terminal])
 
     const handleSubmit = (event: React.FormEvent) => {
         event.preventDefault()
@@ -276,11 +387,14 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
         setActiveTicker('')
         setTerminal(null)
         setQuote(null)
+        setLoadingMoreHistory(false)
+        loadingMoreHistoryRef.current = false
+        pendingVisibleRangeRef.current = null
         setError('')
     }
 
     useEffect(() => {
-        if (!activeTicker || !capabilities?.quote_polling || market !== 'cn') {
+        if (!activeTicker || !capabilities?.quote_polling) {
             return
         }
 
@@ -362,6 +476,10 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
                 borderColor: colors.border,
                 timeVisible: showTime,
                 secondsVisible: false,
+                rightOffset: 0,
+                fixRightEdge: true,
+                lockVisibleTimeRangeOnResize: true,
+                rightBarStaysOnScroll: true,
             },
             localization: {
                 locale: 'zh-CN',
@@ -488,13 +606,43 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
 
         chartBundlesRef.current = bundles
 
+        const anchorLatestBarToRight = () => {
+            syncingRangeRef.current = true
+            mainChart.timeScale().scrollToPosition(0, false)
+            const range = mainChart.timeScale().getVisibleLogicalRange() as LogicalRange | null
+            if (range) {
+                volumeChart.timeScale().setVisibleLogicalRange(range as never)
+                macdChart.timeScale().setVisibleLogicalRange(range as never)
+            }
+            syncingRangeRef.current = false
+        }
+
         const syncVisibleRange = (source: keyof typeof bundles, range: unknown) => {
             if (!range || syncingRangeRef.current) return
+            const typedRange = range as LogicalRange
+            const latestLogicalIndex = Math.max(chartPoints.length - 1, 0)
+            let nextRange = typedRange
+
+            if (typedRange.to > latestLogicalIndex + 2) {
+                const width = typedRange.to - typedRange.from
+                nextRange = {
+                    from: latestLogicalIndex + 2 - width,
+                    to: latestLogicalIndex + 2,
+                }
+            }
+
+            if (source === 'main' && nextRange.from < 10 && terminal?.has_more_left && !loadingMoreHistoryRef.current) {
+                void loadOlderHistory()
+            }
+
             syncingRangeRef.current = true
             ;(Object.entries(chartBundlesRef.current) as Array<[keyof typeof bundles, ChartBundle | undefined]>).forEach(([key, bundle]) => {
                 if (!bundle || key === source) return
-                bundle.chart.timeScale().setVisibleLogicalRange(range as never)
+                bundle.chart.timeScale().setVisibleLogicalRange(nextRange as never)
             })
+            if (nextRange !== typedRange && chartBundlesRef.current[source]) {
+                chartBundlesRef.current[source]?.chart.timeScale().setVisibleLogicalRange(nextRange as never)
+            }
             syncingRangeRef.current = false
         }
 
@@ -522,22 +670,37 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
         volumeChart.subscribeCrosshairMove(param => syncCrosshair('volume', param))
         macdChart.subscribeCrosshairMove(param => syncCrosshair('macd', param))
 
-        mainChart.timeScale().fitContent()
-        volumeChart.timeScale().fitContent()
-        macdChart.timeScale().fitContent()
+        if (pendingVisibleRangeRef.current) {
+            const range = pendingVisibleRangeRef.current
+            mainChart.timeScale().setVisibleLogicalRange(range as never)
+            volumeChart.timeScale().setVisibleLogicalRange(range as never)
+            macdChart.timeScale().setVisibleLogicalRange(range as never)
+            pendingVisibleRangeRef.current = null
+        } else {
+            mainChart.timeScale().fitContent()
+            volumeChart.timeScale().fitContent()
+            macdChart.timeScale().fitContent()
+        }
 
         const resizeObserver = new ResizeObserver(entries => {
+            const scrollPositionBeforeResize = mainChart.timeScale().scrollPosition()
+            const shouldKeepRightAnchor = scrollPositionBeforeResize <= 0.5
+            let shouldAnchorRight = false
             for (const entry of entries) {
                 const target = entry.target
                 const width = entry.contentRect.width
                 const height = entry.contentRect.height
                 if (target === mainContainer) {
                     mainChart.applyOptions({ width, height })
+                    shouldAnchorRight = true
                 } else if (target === volumeContainer) {
                     volumeChart.applyOptions({ width, height })
                 } else if (target === macdContainer) {
                     macdChart.applyOptions({ width, height })
                 }
+            }
+            if (shouldAnchorRight && shouldKeepRightAnchor) {
+                requestAnimationFrame(() => anchorLatestBarToRight())
             }
         })
 
@@ -552,7 +715,7 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
             macdChart.remove()
             chartBundlesRef.current = {}
         }
-    }, [capabilities?.ma, capabilities?.macd, chartPoints, terminal])
+    }, [capabilities?.ma, capabilities?.macd, chartPoints, loadOlderHistory, terminal])
 
     return (
         <div className="chart-page chart-terminal-page">
@@ -663,6 +826,11 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
                             <div className="chart-terminal-quote__caption">
                                 {activePeriodLabel} · {quoteRefreshing ? 'refreshing…' : 'live board'}
                             </div>
+                            {quoteStatusLine && (
+                                <div className="chart-terminal-quote__status">
+                                    {quoteStatusLine}
+                                </div>
+                            )}
                         </div>
                         <div className="chart-terminal-quote__price">
                             <strong>{formatQuoteValue(quote?.last_price)}</strong>
@@ -702,9 +870,16 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
                             <header className="chart-terminal-board__header">
                                 <div>
                                     <h3>{terminal.name} Terminal</h3>
-                                    <p>{chartPoints.length} bars · {activePeriodLabel} · updated {new Date(terminal.updated_at).toLocaleString()}</p>
+                                    <p>
+                                        {chartPoints.length} bars · {activePeriodLabel} · updated {new Date(terminal.updated_at).toLocaleString()}
+                                        {loadingMoreHistory ? ' · loading more history…' : ''}
+                                    </p>
                                 </div>
-                                {terminal.partial && <span className="chart-terminal-board__flag">Partial data</span>}
+                                <div className="chart-terminal-board__flags">
+                                    {terminalStatusFlags.map(flag => (
+                                        <span key={flag} className="chart-terminal-board__flag">{flag}</span>
+                                    ))}
+                                </div>
                             </header>
 
                             <div className="chart-terminal-panels">
@@ -732,7 +907,7 @@ export function ChartPage({ onSessionExpired }: ChartPageProps) {
                             <section className="chart-terminal-sidebar__section">
                                 <div className="chart-terminal-sidebar__header">
                                     <h4>Quote Metrics</h4>
-                                    <span>{capabilities?.terminal_sidebar ? 'A-share profile' : 'base feed only'}</span>
+                                    <span>{capabilities?.terminal_sidebar ? 'full sidebar' : 'base feed only'}</span>
                                 </div>
                                 {terminal.sidebar.metrics.length > 0 ? (
                                     <div className="chart-terminal-metrics">

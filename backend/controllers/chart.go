@@ -45,23 +45,20 @@ func GetStockChart(c *gin.Context) {
 	}
 
 	rangeParam := c.DefaultQuery("range", "3m")
-	if market == "cn" {
-		proxyCNChart(c, ticker, rangeParam)
-		return
+	apiKey := ""
+	if market == "us" {
+		resolved, err := resolveAlphaVantageAPIKey(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		apiKey = resolved
 	}
-
-	points, statusCode, err := fetchUSChartPoints(c, ticker, resolveChartEndpoint(rangeParam), computeCutoffDate(rangeParam))
-	if err != nil {
-		c.JSON(statusCode, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, gin.H{
+	proxyMarketDataJSON(c, "/api/v1/chart", map[string]string{
 		"ticker": ticker,
-		"market": market,
 		"range":  rangeParam,
-		"data":   points,
-	})
+		"market": market,
+	}, "chart", apiKey)
 }
 
 func GetStockTerminal(c *gin.Context) {
@@ -73,57 +70,24 @@ func GetStockTerminal(c *gin.Context) {
 	}
 
 	period := normalizeTerminalPeriod(c.DefaultQuery("period", "day"))
-	if market == "cn" {
-		proxyCNTerminal(c, ticker, period)
-		return
+	apiKey := ""
+	if market == "us" {
+		resolved, err := resolveAlphaVantageAPIKey(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		apiKey = resolved
 	}
-
-	spec := resolveTerminalPeriodSpec(period)
-	points, statusCode, err := fetchUSChartPoints(c, ticker, spec.Endpoint, spec.Cutoff)
-	if err != nil {
-		c.JSON(statusCode, gin.H{"error": err.Error()})
-		return
+	params := map[string]string{
+		"ticker": ticker,
+		"period": period,
+		"market": market,
 	}
-	if len(points) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no chart data available for the requested US ticker"})
-		return
+	if before := strings.TrimSpace(c.Query("before")); before != "" {
+		params["before"] = before
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"ticker":     ticker,
-		"market":     "us",
-		"name":       ticker,
-		"period":     period,
-		"updated_at": time.Now().UTC().Format(time.RFC3339),
-		"chart":      points,
-		"indicators": gin.H{
-			"ma": gin.H{
-				"ma5":  []any{},
-				"ma10": []any{},
-				"ma20": []any{},
-				"ma60": []any{},
-			},
-			"macd": gin.H{
-				"dif":  []any{},
-				"dea":  []any{},
-				"hist": []any{},
-			},
-		},
-		"sidebar": gin.H{
-			"metrics": []any{},
-			"notices": []any{},
-		},
-		"capabilities": gin.H{
-			"chart":            true,
-			"intraday":         false,
-			"ma":               false,
-			"macd":             false,
-			"notices":          false,
-			"terminal_sidebar": false,
-			"quote_polling":    false,
-		},
-		"partial": true,
-	})
+	proxyMarketDataJSON(c, "/api/v1/terminal", params, "terminal", apiKey)
 }
 
 func GetStockQuote(c *gin.Context) {
@@ -134,75 +98,19 @@ func GetStockQuote(c *gin.Context) {
 		return
 	}
 
-	if market == "cn" {
-		proxyCNQuote(c, ticker)
-		return
-	}
-
-	points, statusCode, err := fetchUSChartPoints(c, ticker, resolveChartEndpoint("3m"), computeCutoffDate("1m"))
-	if err != nil {
-		c.JSON(statusCode, gin.H{"error": err.Error()})
-		return
-	}
-	if len(points) == 0 {
-		c.JSON(http.StatusNotFound, gin.H{"error": "no quote data available for the requested US ticker"})
-		return
-	}
-
-	latest := points[len(points)-1]
-	var prev *OHLCVPoint
-	if len(points) > 1 {
-		prev = &points[len(points)-2]
-	}
-
-	var change, changePct any
-	if prev != nil {
-		changeValue := latest.Close - prev.Close
-		change = changeValue
-		if prev.Close != 0 {
-			changePct = (changeValue / prev.Close) * 100
+	apiKey := ""
+	if market == "us" {
+		resolved, err := resolveAlphaVantageAPIKey(c)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
 		}
+		apiKey = resolved
 	}
-
-	c.JSON(http.StatusOK, gin.H{
-		"ticker":        ticker,
-		"market":        "us",
-		"name":          ticker,
-		"updated_at":    time.Now().UTC().Format(time.RFC3339),
-		"last_price":    latest.Close,
-		"change":        change,
-		"change_pct":    changePct,
-		"open":          latest.Open,
-		"high":          latest.High,
-		"low":           latest.Low,
-		"prev_close":    prevCloseOrNil(prev),
-		"volume":        latest.Volume,
-		"amount":        nil,
-		"turnover_rate": nil,
-	})
-}
-
-func proxyCNChart(c *gin.Context, ticker string, rangeParam string) {
-	proxyTradingJSON(c, "/api/v1/chart", map[string]string{
+	proxyMarketDataJSON(c, "/api/v1/quote", map[string]string{
 		"ticker": ticker,
-		"range":  rangeParam,
-		"market": "cn",
-	}, "chart")
-}
-
-func proxyCNTerminal(c *gin.Context, ticker string, period string) {
-	proxyTradingJSON(c, "/api/v1/terminal", map[string]string{
-		"ticker": ticker,
-		"period": period,
-		"market": "cn",
-	}, "terminal")
-}
-
-func proxyCNQuote(c *gin.Context, ticker string) {
-	proxyTradingJSON(c, "/api/v1/quote", map[string]string{
-		"ticker": ticker,
-		"market": "cn",
-	}, "quote")
+		"market": market,
+	}, "quote", apiKey)
 }
 
 func resolveChartEndpoint(rangeParam string) chartEndpointConfig {
@@ -408,8 +316,8 @@ func fetchAlphaVantageSeries(ticker string, endpoint chartEndpointConfig, apiKey
 	return raw, http.StatusOK, nil
 }
 
-func proxyTradingJSON(c *gin.Context, upstreamPath string, query map[string]string, endpointLabel string) {
-	upstream, err := url.Parse(fmt.Sprintf("%s%s", tradingServiceURL, upstreamPath))
+func proxyMarketDataJSON(c *gin.Context, upstreamPath string, query map[string]string, endpointLabel string, alphaVantageAPIKey string) {
+	upstream, err := url.Parse(fmt.Sprintf("%s%s", marketDataServiceURL, upstreamPath))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to build upstream %s url", endpointLabel)})
 		return
@@ -425,17 +333,20 @@ func proxyTradingJSON(c *gin.Context, upstreamPath string, query map[string]stri
 		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("failed to build %s proxy request", endpointLabel)})
 		return
 	}
+	if alphaVantageAPIKey != "" {
+		req.Header.Set("X-Alpha-Vantage-Key", alphaVantageAPIKey)
+	}
 
 	resp, err := tradingHTTPClient.Do(req)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("failed to reach A-share %s service", endpointLabel)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("failed to reach market data %s service", endpointLabel)})
 		return
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("failed to read A-share %s response", endpointLabel)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("failed to read market data %s response", endpointLabel)})
 		return
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -446,11 +357,13 @@ func proxyTradingJSON(c *gin.Context, upstreamPath string, query map[string]stri
 
 	var payload map[string]interface{}
 	if err := json.Unmarshal(body, &payload); err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("invalid response from A-share %s service", endpointLabel)})
+		c.JSON(http.StatusBadGateway, gin.H{"error": fmt.Sprintf("invalid response from market data %s service", endpointLabel)})
 		return
 	}
 	if _, exists := payload["market"]; !exists {
-		payload["market"] = "cn"
+		if market, ok := query["market"]; ok && market != "" {
+			payload["market"] = market
+		}
 	}
 	c.JSON(http.StatusOK, payload)
 }

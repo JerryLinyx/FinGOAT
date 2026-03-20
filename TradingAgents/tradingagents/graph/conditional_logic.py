@@ -57,6 +57,7 @@ def sanitize_orphan_tool_calls(messages: list) -> list:
     Returns a new list where any AI message whose tool calls are not fully
     matched by subsequent contiguous ToolMessages has those tool calls removed.
     """
+    # Per ADR-025, strict tool-order providers need orphan cleanup before downstream LLM calls.
     if not messages:
         return messages
 
