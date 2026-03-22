@@ -9,6 +9,7 @@ from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 FIXTURES_DIR = Path(__file__).parent / "fixtures"
+SERVICE_DIR = Path(__file__).resolve().parents[2]
 
 
 class FakeRedis:
@@ -83,16 +84,65 @@ class FakeRedis:
         self._lists.setdefault(key, []).append(values)
         return str(len(self._lists[key]))
 
+    def close(self):
+        return None
 
-class FakeThread:
-    def __init__(self, *args, **kwargs):  # noqa: ARG002
+    def pipeline(self):
+        outer = self
+
+        class FakePipeline:
+            def __init__(self):
+                self._ops = []
+
+            def rpush(self, key, value):
+                self._ops.append(("rpush", key, value))
+                return self
+
+            def expire(self, key, ttl):
+                self._ops.append(("expire", key, ttl))
+                return self
+
+            def execute(self):
+                for op, key, value in self._ops:
+                    if op == "rpush":
+                        outer._lists.setdefault(key, []).append(value)
+                    elif op == "expire":
+                        outer.expire(key, value)
+                return True
+
+        return FakePipeline()
+
+
+class FakeProcess:
+    def __init__(self, target=None, args=(), name=None, daemon=None):  # noqa: ARG002
+        self.target = target
+        self.args = args
+        self.name = name
+        self.daemon = daemon
+        self.exitcode = None
         self.started = False
 
     def start(self):
         self.started = True
+        try:
+            if self.target is not None:
+                self.target(*self.args)
+            self.exitcode = 0
+        except Exception:
+            self.exitcode = 1
+            raise
 
     def is_alive(self):
         return False
+
+    def join(self, timeout=None):  # noqa: ARG002
+        return None
+
+    def terminate(self):
+        self.exitcode = -15
+
+    def kill(self):
+        self.exitcode = -9
 
 
 class FakeTradingAgentsGraph:
@@ -120,7 +170,42 @@ class FakeTradingAgentsGraph:
         state["raw_trace"]["provider"] = self.config.get("llm_provider", "mock-llm")
         return state, decision
 
-    async def propagate_streaming(self, company_name, trade_date, token_callback, stage_end_callback):
+    async def propagate_streaming(self, company_name, trade_date, token_callback, stage_end_callback, event_callback=None):  # noqa: ARG002
+        stage_id = self.selected_analysts[0] if self.selected_analysts else None
+        if self.config.get("top_level_only") and stage_id:
+            node_name = {
+                "market": "Market Analyst",
+                "social": "Social Analyst",
+                "news": "News Analyst",
+                "fundamentals": "Fundamentals Analyst",
+            }[stage_id]
+            report_key = {
+                "market": "market_report",
+                "social": "sentiment_report",
+                "news": "news_report",
+                "fundamentals": "fundamentals_report",
+            }[stage_id]
+            state = {
+                "company_of_interest": company_name,
+                "trade_date": trade_date,
+                report_key: f"{stage_id} report ready.",
+                f"__stage_starts.{node_name}": 0.0,
+                f"__stage_ends.{node_name}": 1.5,
+                "__stage_usage": {
+                    stage_id: {
+                        "prompt_tokens": 50,
+                        "completion_tokens": 20,
+                        "total_tokens": 70,
+                        "llm_calls": 1,
+                        "failed_calls": 0,
+                        "latency_ms": 800,
+                    }
+                },
+            }
+            await token_callback(stage_id, node_name, f"{stage_id} token")
+            await stage_end_callback(stage_id, state)
+            return state
+
         partial_state = {
             "company_of_interest": company_name,
             "trade_date": trade_date,
@@ -135,6 +220,20 @@ class FakeTradingAgentsGraph:
         state["company_of_interest"] = company_name
         state["trade_date"] = trade_date
         state["raw_trace"]["provider"] = self.config.get("llm_provider", "mock-llm")
+        return state
+
+    async def propagate_from_state_streaming(self, init_state, token_callback, stage_end_callback, event_callback=None):  # noqa: ARG002
+        state = dict(init_state)
+        state.update(json.loads((FIXTURES_DIR / "fake_graph_state.json").read_text()))
+        state["company_of_interest"] = init_state.get("company_of_interest", "NVDA")
+        state["trade_date"] = init_state.get("trade_date", "2024-05-10")
+        state["raw_trace"]["provider"] = self.config.get("llm_provider", "mock-llm")
+        await token_callback("research_debate", "Bull Researcher", "bull token")
+        await stage_end_callback("research_debate", state)
+        await stage_end_callback("portfolio_manager", state)
+        await stage_end_callback("trader_plan", state)
+        await stage_end_callback("risk_debate", state)
+        await stage_end_callback("risk_management", state)
         return state
 
     def process_signal(self, full_signal):
@@ -167,16 +266,70 @@ def install_fake_tradingagents_modules() -> None:
 
     trading_graph_module = types.ModuleType("tradingagents.graph.trading_graph")
     trading_graph_module.TradingAgentsGraph = FakeTradingAgentsGraph
+    propagation_module = types.ModuleType("tradingagents.graph.propagation")
+
+    class FakePropagator:
+        def create_initial_state(self, company_name: str, trade_date: str):
+            return {
+                "messages": [("human", company_name)],
+                "company_of_interest": company_name,
+                "trade_date": trade_date,
+                "investment_debate_state": {"history": "", "current_response": "", "count": 0},
+                "risk_debate_state": {
+                    "history": "",
+                    "risky_history": "",
+                    "safe_history": "",
+                    "neutral_history": "",
+                    "latest_speaker": "",
+                    "current_risky_response": "",
+                    "current_safe_response": "",
+                    "current_neutral_response": "",
+                    "judge_decision": "",
+                    "count": 0,
+                },
+                "market_report": "",
+                "fundamentals_report": "",
+                "sentiment_report": "",
+                "news_report": "",
+            }
+
+    propagation_module.Propagator = FakePropagator
 
     sys.modules["tradingagents"] = tradingagents_pkg
     sys.modules["tradingagents.default_config"] = default_config_module
     sys.modules["tradingagents.graph"] = graph_pkg
     sys.modules["tradingagents.graph.trading_graph"] = trading_graph_module
+    sys.modules["tradingagents.graph.propagation"] = propagation_module
+
+
+def install_fake_marketdata_modules() -> None:
+    marketdata_pkg = types.ModuleType("marketdata")
+    marketdata_pkg.__path__ = []  # type: ignore[attr-defined]
+    services_pkg = types.ModuleType("marketdata.services")
+    services_pkg.__path__ = []  # type: ignore[attr-defined]
+
+    candles_module = types.ModuleType("marketdata.services.candles_service")
+    candles_module.get_chart_payload = lambda *args, **kwargs: {}  # noqa: ARG005
+
+    quote_module = types.ModuleType("marketdata.services.quote_service")
+    quote_module.get_quote = lambda *args, **kwargs: {}  # noqa: ARG005
+
+    snapshot_module = types.ModuleType("marketdata.services.snapshot_service")
+    snapshot_module.get_terminal_snapshot = lambda *args, **kwargs: {}  # noqa: ARG005
+
+    sys.modules["marketdata"] = marketdata_pkg
+    sys.modules["marketdata.services"] = services_pkg
+    sys.modules["marketdata.services.candles_service"] = candles_module
+    sys.modules["marketdata.services.quote_service"] = quote_module
+    sys.modules["marketdata.services.snapshot_service"] = snapshot_module
 
 
 class MockAnalysisPipelineTest(unittest.TestCase):
     def setUp(self):
         install_fake_tradingagents_modules()
+        install_fake_marketdata_modules()
+        if str(SERVICE_DIR) not in sys.path:
+            sys.path.insert(0, str(SERVICE_DIR))
         sys.modules.pop("trading_service", None)
         self.trading_service = importlib.import_module("trading_service")
         self.redis = FakeRedis()
@@ -185,19 +338,25 @@ class MockAnalysisPipelineTest(unittest.TestCase):
         self.trading_service.worker_stop_event.clear()
 
         self.redis_patch = patch.object(self.trading_service, "get_redis_client", return_value=self.redis)
-        self.thread_patch = patch.object(self.trading_service.threading, "Thread", FakeThread)
+        self.worker_patch = patch.object(self.trading_service, "ensure_worker_thread_running", return_value=False)
         self.graph_patch = patch.object(self.trading_service, "TradingAgentsGraph", FakeTradingAgentsGraph)
+        self.process_patch = patch.object(self.trading_service.multiprocessing, "Process", FakeProcess)
+        self.redis_builder_patch = patch.object(self.trading_service, "build_redis_client", return_value=self.redis)
 
         self.redis_patch.start()
-        self.thread_patch.start()
+        self.worker_patch.start()
         self.graph_patch.start()
+        self.process_patch.start()
+        self.redis_builder_patch.start()
         self.client = TestClient(self.trading_service.app)
 
     def tearDown(self):
         self.client.close()
+        self.process_patch.stop()
         self.graph_patch.stop()
-        self.thread_patch.stop()
+        self.worker_patch.stop()
         self.redis_patch.stop()
+        self.redis_builder_patch.stop()
         self.trading_service.redis_client = None
         self.trading_service.worker_thread = None
         self.trading_service.worker_stop_event.clear()
@@ -237,6 +396,8 @@ class MockAnalysisPipelineTest(unittest.TestCase):
         self.assertEqual(body["decision"]["confidence"], 0.82)
         self.assertTrue(body["stages"])
         self.assertEqual(body["stages"][0]["stage_id"], "market")
+        self.assertEqual(body["stages"][0]["backend"], "default")
+        self.assertEqual(body["stages"][0]["provider"], "dashscope")
         self.assertEqual(body["analysis_report"]["messages"][0]["type"], "human")
         self.assertEqual(body["analysis_report"]["raw_state"]["raw_trace"]["provider"], "dashscope")
         self.assertIsNone(body["error"])
@@ -272,6 +433,7 @@ class MockAnalysisPipelineTest(unittest.TestCase):
         self.assertIn("Momentum is improving", report["__key_outputs"]["market_report"]["summary"])
         self.assertEqual(report["__stages"][0]["stage_id"], "market")
         self.assertEqual(report["__stages"][0]["backend"], "default")
+        self.assertEqual(report["__stages"][0]["provider"], "unknown")
 
     def test_processing_checkpoint_is_persisted_before_completion(self):
         snapshots = []
@@ -299,10 +461,31 @@ class MockAnalysisPipelineTest(unittest.TestCase):
             snap for snap in snapshots
             if snap["status"] == "processing"
             and isinstance(snap.get("analysis_report"), dict)
-            and snap["analysis_report"].get("market_report") == "Partial market view ready."
+            and snap["analysis_report"].get("market_report")
         ]
         self.assertTrue(processing_snapshots)
         self.assertGreater(processing_snapshots[-1]["processing_time_seconds"], 0)
+
+    def test_parallel_analyst_subprocesses_publish_stream_events(self):
+        payload = {
+            "task_id": "streaming-top-analysts",
+            "ticker": "NVDA",
+            "date": "2024-05-10",
+            "llm_config": {
+                "provider": "dashscope",
+                "deep_think_llm": "qwen3.5-flash",
+                "quick_think_llm": "qwen3.5-flash",
+            },
+        }
+
+        self.trading_service.process_analysis_payload(json.dumps(payload))
+
+        for stage_id in ("market", "social", "news", "fundamentals"):
+            stream_key = self.trading_service.analyst_stream_key(payload["task_id"], stage_id)
+            entries = self.redis._lists.get(stream_key, [])
+            self.assertTrue(entries, f"missing stream entries for {stage_id}")
+            self.assertEqual(entries[0]["type"], "analyst_start")
+            self.assertIn(entries[-1]["type"], {"stage_end", "analyst_complete"})
 
     def test_extract_analysis_report_includes_stage_usage(self):
         class FakeCollector:

@@ -127,6 +127,22 @@
   - Record: `ADR-001`
 - [x] Make terminate/resume clean Redis queue state and prevent duplicate task payloads
   - Record: `ADR-001`
+- [x] Terminate running analysis subprocesses on cancel so Ollama/local model requests do not continue after task cancellation
+  - Record: `ADR-041`
+- [x] Run top-level analyst stages as dedicated subprocesses and stream analyst-aware Redis Stream events through the existing SSE path
+  - Record: `ADR-042`
+- [x] Normalize provider usage extraction into a shared runtime helper and restore Ollama stage token visibility
+  - Record: `ADR-044`
+- [x] Introduce `StageRequest` / `StageResult` / `ExecutionBackend` contracts for selected unified runtime stages
+  - Record: `ADR-044`
+- [x] Expand OpenClaw workflow execution from the top-level 4 analysts to `portfolio_manager / trader_plan / risk_management` (7/9 single-agent stages)
+  - Record: `ADR-044`
+- [x] Preserve per-stage `provider` metadata through the Python -> Go -> frontend task response path
+  - Record: `ADR-044`
+- [x] Align OpenClaw workflow bootstrap and timeout behavior with runtime contracts (`StageRequest.user_id`, configurable `llm_timeout`)
+  - Record: `ADR-044`
+- [x] Route Dockerized OpenClaw analysis traffic to the host OpenClaw gateway instead of container-local `localhost`
+  - Record: `ADR-044`
 - [x] Promote stage-centric task responses (`stages`) to the primary frontend consumption model while keeping `analysis_report` transitional
   - Record: `ADR-010`
 - [x] Define configuration precedence rules across Go, Python, and Docker
@@ -153,12 +169,17 @@
   - Record: `ADR-023`
 - [x] Aggregate LLM token usage to stage-level analyst stats and show per-stage duration + token counts in analysis UI
   - Record: `ADR-037`
+- [x] Split analysis configuration into user-facing `Analysis Mode` and independent `Model Provider` selection
+  - Record: `ADR-044`
+- [x] Add a mixed analysis view with a top-level live analyst grid while preserving the existing bottom stage/final results panel
+  - Record: `ADR-042`
 - [x] Fix the deprecated sync analysis debug endpoint so real provider validation can run without nested event-loop failure
   - Record: `ADR-032`
 - [x] Verify `DashScope / qwen3.5-plus` real analysis runs populate live stage token and latency counters
   - Record: `ADR-032`
-- [ ] Extend OpenClaw top-level analyst execution to report stage-level token usage, not just duration/status
+- [ ] Extend OpenClaw stage execution to report stage-level token usage, not just provider/duration/status
   - Related record: `ADR-037`
+  - Related record: `ADR-044`
 - [ ] Flush usage events incrementally during long-running analysis tasks instead of only at terminal task completion
   - Related record: `ADR-032`
 
@@ -187,11 +208,15 @@
   - Record: `ADR-028`
 - [x] Make Feed page unauthorized responses follow the shared session-expiry flow
   - Record: `ADR-028`
+- [ ] Sanitize malformed RSS text payloads before feed ingest so PostgreSQL UTF-8 validation does not drop items during insert
+  - Related record: `ADR-043`
 - [ ] Add vendor fetch deduplication and runtime caching for expensive data calls
 - [ ] Reduce prompt/context growth across analyst stages before promoting `qwen3.5-plus` style large-model runs to production defaults
   - Related record: `ADR-032`
 - [ ] Restore full DashScope provider fidelity for embedding paths inside the trading container instead of falling back to OpenAI-compatible embeddings
   - Related record: `ADR-032`
+- [ ] Design a multi-agent OpenClaw protocol for `research_debate / risk_debate` so workflow support can move from `7/9` to `9/9`
+  - Related record: `ADR-044`
 - [x] Migrate ALPHA_VANTAGE_API_KEY from startup env var to per-user DB key (BYOK)
   - Record: `ADR-025`
 - [x] Expose `alpha_vantage` in the user API-key list so the new frontend analysis gate is satisfiable
@@ -199,6 +224,14 @@
   - Record: `ADR-031`
 - [x] Inject user LLM API keys server-side so Python never falls back to env vars
   - Record: `ADR-025`
+- [x] Strip provider API keys from persisted trading task config payloads
+  - Record: `ADR-040`
+- [x] Rehydrate per-user provider secrets and Alpha Vantage BYOK on analysis resume
+  - Record: `ADR-040`
+- [x] Reset Python worker provider env to a clean base state before each analysis run
+  - Record: `ADR-040`
+- [x] Require explicit `OPENAI_API_KEY` for OpenAI-only tool/news/fundamental fallbacks
+  - Record: `ADR-040`
 - [x] Gate API mode provider dropdown by configured keys; clear all API provider model presets
   - Record: `ADR-025`
 - [x] Add max tool-call iteration guard to analyst nodes (prevent infinite loop on DashScope models)

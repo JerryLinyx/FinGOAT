@@ -3,7 +3,44 @@ import type { ChangeEvent, FormEvent } from 'react'
 import { tradingService, type AnalysisTask, type StreamEvent } from '../services/tradingService'
 import type { MarketMode } from '../services/tradingService'
 import { AgentResultsModule } from './AgentResultsModule'
+import { AnalystLiveGrid, type AnalystLiveCardState } from './AnalystLiveGrid'
+import {
+  type ActivityEntry,
+  nextActivityId, resetActivityId,
+  STAGE_LABEL_MAP, type AgentStageKey,
+  NODE_TO_STAGE, NODE_LABEL,
+  type LiveStageResult, parseLiveStageResult,
+} from './agentStages'
 import '../TradingAnalysis.css'
+
+type TopLevelAnalystStage = 'market' | 'social' | 'news' | 'fundamentals'
+
+const TOP_LEVEL_ANALYSTS: Array<{ stageId: TopLevelAnalystStage; label: string; nodeName: string }> = [
+    { stageId: 'market', label: 'Technical', nodeName: 'Market Analyst' },
+    { stageId: 'social', label: 'Social Media', nodeName: 'Social Analyst' },
+    { stageId: 'news', label: 'News', nodeName: 'News Analyst' },
+    { stageId: 'fundamentals', label: 'Fundamentals', nodeName: 'Fundamentals Analyst' },
+]
+
+const createInitialAnalystLiveState = (): Record<TopLevelAnalystStage, AnalystLiveCardState> =>
+    Object.fromEntries(
+        TOP_LEVEL_ANALYSTS.map((item) => [
+            item.stageId,
+            {
+                stageId: item.stageId,
+                label: item.label,
+                nodeName: item.nodeName,
+                status: 'pending',
+                text: '',
+                summary: null,
+                currentTool: null,
+                lastUpdatedAt: null,
+                startedAt: null,
+                completedAt: null,
+                error: null,
+            },
+        ]),
+    ) as Record<TopLevelAnalystStage, AnalystLiveCardState>
 
 interface TradingAnalysisProps {
     onSessionExpired?: () => void
@@ -36,7 +73,23 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
     const [error, setError] = useState('')
     const [currentTask, setCurrentTask] = useState<AnalysisTask | null>(null)
     const [previousAnalyses, setPreviousAnalyses] = useState<AnalysisTask[]>([])
-    const [stageTokens, setStageTokens] = useState<Map<string, string>>(new Map())
+    // Per-node accumulated tokens (key = LangGraph node name e.g. "Bull Researcher")
+    const [nodeTokens, setNodeTokens] = useState<Map<string, string>>(new Map())
+    // Which nodes are currently emitting tokens
+    const [activeNodes, setActiveNodes] = useState<Set<string>>(new Set())
+    // Parsed stage_end stats, available immediately without waiting for REST poll
+    const [liveStageResults, setLiveStageResults] = useState<Map<string, LiveStageResult>>(new Map())
+    const [activityLog, setActivityLog] = useState<ActivityEntry[]>([])
+    const [analystLive, setAnalystLive] = useState<Record<TopLevelAnalystStage, AnalystLiveCardState>>(createInitialAnalystLiveState)
+
+    // Which nodes have already fired a stage_start log entry (per-run)
+    const startedNodesRef = useRef<Set<string>>(new Set())
+    // Last node seen per stage_id — used to derive stageTokens and mark inactive
+    const lastNodeByStageRef = useRef<Map<string, string>>(new Map())
+    // Pending token text per node for batched activity-log flushing
+    const nodeBuffersRef = useRef<Map<string, string>>(new Map())
+    // Single flush-interval for all node buffers
+    const bufferFlushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
     const pollingTaskIdRef = useRef<string | null>(null)
     const pollCancelledRef = useRef(false)
 
@@ -68,6 +121,32 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         setLoading(task?.status === 'processing' || task?.status === 'pending')
         persistActiveTask(task)
     }, [persistActiveTask])
+
+    useEffect(() => {
+        if (!currentTask?.stages || currentTask.stages.length === 0) return
+
+        setAnalystLive((previous) => {
+            const next = { ...previous }
+            for (const stage of currentTask.stages ?? []) {
+                if (!TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stage.stage_id)) continue
+                const stageId = stage.stage_id as TopLevelAnalystStage
+                next[stageId] = {
+                    ...next[stageId],
+                    status: stage.status,
+                    summary: stage.summary ?? next[stageId].summary,
+                    startedAt: stage.started_at ?? next[stageId].startedAt,
+                    completedAt: stage.completed_at ?? next[stageId].completedAt,
+                    durationSeconds: stage.duration_seconds ?? next[stageId].durationSeconds,
+                    totalTokens: stage.total_tokens ?? next[stageId].totalTokens,
+                    promptTokens: stage.prompt_tokens ?? next[stageId].promptTokens,
+                    completionTokens: stage.completion_tokens ?? next[stageId].completionTokens,
+                    llmCalls: stage.llm_calls ?? next[stageId].llmCalls,
+                    error: stage.error ?? next[stageId].error,
+                }
+            }
+            return next
+        })
+    }, [currentTask?.task_id, currentTask?.stages])
 
     // Fetch previous analyses on mount
     const loadPreviousAnalyses = useCallback(async () => {
@@ -106,19 +185,278 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         const token = tradingService.getAuthToken() ?? ''
         if (!token) return
 
-        setStageTokens(new Map()) // reset on new task / status change
+        // Reset all streaming state for this run
+        setNodeTokens(new Map())
+        setActiveNodes(new Set())
+        setLiveStageResults(new Map())
+        setActivityLog([])
+        setAnalystLive(createInitialAnalystLiveState())
+        resetActivityId()
+        startedNodesRef.current = new Set()
+        lastNodeByStageRef.current = new Map()
+        nodeBuffersRef.current = new Map()
+
+        // Single 500ms interval flushes token snippets from ALL active nodes at once
+        bufferFlushTimerRef.current = setInterval(() => {
+            const buffers = nodeBuffersRef.current
+            if (buffers.size === 0) return
+            const newEntries: ActivityEntry[] = []
+            for (const [node, text] of buffers) {
+                if (!text.trim()) continue
+                const snippet = text.length > 100 ? text.slice(0, 97) + '…' : text
+                const stageId = NODE_TO_STAGE[node] ?? node as AgentStageKey
+                newEntries.push({
+                    id: nextActivityId(),
+                    timestamp: Date.now(),
+                    type: 'token',
+                    stageId,
+                    node,
+                    nodeLabel: NODE_LABEL[node] ?? node,
+                    content: snippet,
+                })
+            }
+            if (newEntries.length > 0) {
+                setActivityLog(prev => [...prev, ...newEntries])
+            }
+            nodeBuffersRef.current = new Map()
+        }, 500)
 
         const cleanup = tradingService.streamAnalysis(currentTask.task_id, (event: StreamEvent) => {
-            if (event.type === 'token' && event.stage_id && event.t) {
-                setStageTokens(prev => {
-                    const next = new Map(prev)
-                    next.set(event.stage_id!, (next.get(event.stage_id!) ?? '') + event.t!)
+            if (event.type === 'token' && event.t) {
+                const node = event.node ?? event.stage_id ?? 'unknown'
+                const stageId = (event.stage_id ?? '') as AgentStageKey
+
+                // Track last active node per stage (for marking inactive on stage_end)
+                lastNodeByStageRef.current.set(stageId, node)
+
+                // Mark node active
+                setActiveNodes(prev => {
+                    if (prev.has(node)) return prev
+                    const next = new Set(prev)
+                    next.add(node)
                     return next
                 })
+
+                // Accumulate tokens per node
+                setNodeTokens(prev => {
+                    const next = new Map(prev)
+                    next.set(node, (next.get(node) ?? '') + event.t!)
+                    return next
+                })
+
+                // Per-node stage_start log entry (fires once per node per run)
+                if (!startedNodesRef.current.has(node)) {
+                    startedNodesRef.current.add(node)
+                    const nodeLabel = NODE_LABEL[node] ?? node
+                    setActivityLog(prev => [...prev, {
+                        id: nextActivityId(),
+                        timestamp: Date.now(),
+                        type: 'stage_start',
+                        stageId,
+                        node,
+                        nodeLabel,
+                        content: `${nodeLabel} started`,
+                    }])
+                }
+
+                // Buffer token text for the 500ms flush
+                nodeBuffersRef.current.set(
+                    node,
+                    (nodeBuffersRef.current.get(node) ?? '') + event.t,
+                )
+
+                if (TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId)) {
+                    setAnalystLive((previous) => {
+                        const next = { ...previous }
+                        const topStage = stageId as TopLevelAnalystStage
+                        next[topStage] = {
+                            ...next[topStage],
+                            status: 'processing',
+                            nodeName: node,
+                            text: `${next[topStage].text}${event.t ?? event.text ?? ''}`,
+                            lastUpdatedAt: event.ts ?? new Date().toISOString(),
+                        }
+                        return next
+                    })
+                }
+
+            } else if (event.type === 'analyst_start') {
+                const stageId = event.stage_id as TopLevelAnalystStage | undefined
+                if (!stageId || !TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId)) return
+                setAnalystLive((previous) => ({
+                    ...previous,
+                    [stageId]: {
+                        ...previous[stageId],
+                        status: 'processing',
+                        startedAt: event.ts ?? new Date().toISOString(),
+                        lastUpdatedAt: event.ts ?? new Date().toISOString(),
+                        error: null,
+                    },
+                }))
+                setActivityLog(prev => [...prev, {
+                    id: nextActivityId(),
+                    timestamp: Date.now(),
+                    type: 'stage_start',
+                    stageId,
+                    node: event.node,
+                    nodeLabel: NODE_LABEL[event.node ?? ''] ?? STAGE_LABEL_MAP[stageId],
+                    content: `${NODE_LABEL[event.node ?? ''] ?? STAGE_LABEL_MAP[stageId]} started`,
+                }])
+
+            } else if (event.type === 'tool_start' || event.type === 'tool_end') {
+                const stageId = event.stage_id as TopLevelAnalystStage | undefined
+                if (!stageId || !TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId)) return
+                setAnalystLive((previous) => ({
+                    ...previous,
+                    [stageId]: {
+                        ...previous[stageId],
+                        currentTool: event.type === 'tool_start' ? (event.tool ?? 'tool') : null,
+                        lastUpdatedAt: event.ts ?? new Date().toISOString(),
+                    },
+                }))
+                setActivityLog(prev => [...prev, {
+                    id: nextActivityId(),
+                    timestamp: Date.now(),
+                    type: 'task_info',
+                    stageId,
+                    node: event.node,
+                    nodeLabel: NODE_LABEL[event.node ?? ''] ?? STAGE_LABEL_MAP[stageId],
+                    content: event.type === 'tool_start'
+                        ? `Tool started${event.tool ? ` · ${event.tool}` : ''}`
+                        : `Tool finished${event.tool ? ` · ${event.tool}` : ''}`,
+                }])
+
+            } else if (event.type === 'partial') {
+                const stageId = event.stage_id as TopLevelAnalystStage | undefined
+                if (!stageId || !TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId)) return
+                let partialContent = ''
+                if (event.data) partialContent = event.data
+                setAnalystLive((previous) => ({
+                    ...previous,
+                    [stageId]: {
+                        ...previous[stageId],
+                        summary: event.summary ?? previous[stageId].summary,
+                        lastUpdatedAt: event.ts ?? new Date().toISOString(),
+                        text: partialContent ? partialContent : previous[stageId].text,
+                    },
+                }))
+
+            } else if (event.type === 'analyst_complete') {
+                const stageId = event.stage_id as TopLevelAnalystStage | undefined
+                if (!stageId || !TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId)) return
+                let parsed: Record<string, unknown> = {}
+                if (event.data) {
+                    try {
+                        parsed = JSON.parse(event.data) as Record<string, unknown>
+                    } catch {
+                        parsed = {}
+                    }
+                }
+                setAnalystLive((previous) => ({
+                    ...previous,
+                    [stageId]: {
+                        ...previous[stageId],
+                        status: 'completed',
+                        summary: (typeof parsed.summary === 'string' ? parsed.summary : event.summary) ?? previous[stageId].summary,
+                        completedAt: (typeof parsed.completed_at === 'string' ? parsed.completed_at : event.ts) ?? previous[stageId].completedAt,
+                        lastUpdatedAt: event.ts ?? new Date().toISOString(),
+                        durationSeconds: typeof parsed.duration_seconds === 'number' ? parsed.duration_seconds : previous[stageId].durationSeconds,
+                        totalTokens: typeof parsed.total_tokens === 'number' ? parsed.total_tokens : previous[stageId].totalTokens,
+                        promptTokens: typeof parsed.prompt_tokens === 'number' ? parsed.prompt_tokens : previous[stageId].promptTokens,
+                        completionTokens: typeof parsed.completion_tokens === 'number' ? parsed.completion_tokens : previous[stageId].completionTokens,
+                        llmCalls: typeof parsed.llm_calls === 'number' ? parsed.llm_calls : previous[stageId].llmCalls,
+                        currentTool: null,
+                    },
+                }))
+
+            } else if (event.type === 'analyst_error') {
+                const stageId = event.stage_id as TopLevelAnalystStage | undefined
+                if (!stageId || !TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId)) return
+                const nextStatus = event.status === 'cancelled' ? 'cancelled' : 'failed'
+                setAnalystLive((previous) => ({
+                    ...previous,
+                    [stageId]: {
+                        ...previous[stageId],
+                        status: nextStatus,
+                        error: event.error ?? 'Analyst failed',
+                        currentTool: null,
+                        lastUpdatedAt: event.ts ?? new Date().toISOString(),
+                    },
+                }))
+                setActivityLog(prev => [...prev, {
+                    id: nextActivityId(),
+                    timestamp: Date.now(),
+                    type: 'error',
+                    stageId,
+                    node: event.node,
+                    nodeLabel: NODE_LABEL[event.node ?? ''] ?? STAGE_LABEL_MAP[stageId],
+                    content: event.error ?? 'Analyst failed',
+                }])
+
             } else if (event.type === 'stage_end') {
-                // Refresh task state for updated stages
+                const stageId = (event.stage_id ?? '') as AgentStageKey
+                const lastNode = lastNodeByStageRef.current.get(stageId)
+
+                // Mark last-active node for this stage as inactive
+                if (lastNode) {
+                    setActiveNodes(prev => {
+                        if (!prev.has(lastNode)) return prev
+                        const next = new Set(prev)
+                        next.delete(lastNode)
+                        return next
+                    })
+                    // Flush any buffered text for this node immediately
+                    const buffered = nodeBuffersRef.current.get(lastNode) ?? ''
+                    if (buffered.trim()) {
+                        const snippet = buffered.length > 100 ? buffered.slice(0, 97) + '…' : buffered
+                        setActivityLog(prev => [...prev, {
+                            id: nextActivityId(),
+                            timestamp: Date.now(),
+                            type: 'token',
+                            stageId,
+                            node: lastNode,
+                            nodeLabel: NODE_LABEL[lastNode] ?? lastNode,
+                            content: snippet,
+                        }])
+                        nodeBuffersRef.current.delete(lastNode)
+                    }
+                }
+
+                // Parse stage_end data immediately — don't wait for REST
+                if (event.data) {
+                    const parsed = parseLiveStageResult(event.data)
+                    if (parsed) {
+                        setLiveStageResults(prev => {
+                            const next = new Map(prev)
+                            next.set(stageId, parsed)
+                            return next
+                        })
+                    }
+                }
+
+                // Activity log entry
+                const nodeLabel = lastNode
+                    ? (NODE_LABEL[lastNode] ?? lastNode)
+                    : (STAGE_LABEL_MAP[stageId] ?? stageId)
+                setActivityLog(prev => [...prev, {
+                    id: nextActivityId(),
+                    timestamp: Date.now(),
+                    type: 'stage_end',
+                    stageId,
+                    node: lastNode,
+                    nodeLabel,
+                    content: `${nodeLabel} completed`,
+                }])
+
                 tradingService.getAnalysisResult(currentTask.task_id).then(applyTaskState).catch(() => {})
+
             } else if (event.type === 'task_complete' || event.type === 'task_error') {
+                setActivityLog(prev => [...prev, {
+                    id: nextActivityId(),
+                    timestamp: Date.now(),
+                    type: event.type === 'task_complete' ? 'task_info' : 'error',
+                    content: event.type === 'task_complete' ? 'Analysis complete' : `Error: ${event.error ?? 'unknown'}`,
+                }])
                 tradingService.getAnalysisResult(currentTask.task_id).then(applyTaskState).catch(() => {})
                 loadPreviousAnalyses()
             }
@@ -126,6 +464,10 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
 
         return () => {
             cleanup()
+            if (bufferFlushTimerRef.current) {
+                clearInterval(bufferFlushTimerRef.current)
+                bufferFlushTimerRef.current = null
+            }
         }
     }, [currentTask?.task_id, currentTask?.status, applyTaskState, loadPreviousAnalyses])
 
@@ -401,6 +743,26 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         }
     }
 
+    const analystCards = TOP_LEVEL_ANALYSTS.map((definition) => {
+        const live = analystLive[definition.stageId]
+        const stage = currentTask?.stages?.find((item) => item.stage_id === definition.stageId)
+        return {
+            ...live,
+            status: live.status === 'processing' || live.text || live.currentTool
+                ? live.status
+                : ((stage?.status as AnalystLiveCardState['status'] | undefined) ?? live.status),
+            summary: live.summary ?? stage?.summary ?? null,
+            startedAt: live.startedAt ?? stage?.started_at ?? null,
+            completedAt: live.completedAt ?? stage?.completed_at ?? null,
+            durationSeconds: live.durationSeconds ?? stage?.duration_seconds,
+            totalTokens: live.totalTokens ?? stage?.total_tokens,
+            promptTokens: live.promptTokens ?? stage?.prompt_tokens,
+            completionTokens: live.completionTokens ?? stage?.completion_tokens,
+            llmCalls: live.llmCalls ?? stage?.llm_calls,
+            error: live.error ?? stage?.error ?? null,
+        }
+    })
+
     const renderAnalysisResult = () => {
         if (!currentTask) return null
         const stageStats = getStageStats(currentTask)
@@ -415,7 +777,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                     </div>
                     <div className="result-header-actions">
                         <span className="status-badge" style={{ backgroundColor: '#1f2937' }}>
-                            {currentTask.execution_mode === 'openclaw' ? 'OPENCLAW' : 'DEFAULT'}
+                            {currentTask.execution_mode === 'openclaw' ? 'OPENCLAW' : 'STANDARD'}
                         </span>
                         <span
                             className="status-badge"
@@ -460,7 +822,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                                 <strong>{currentTask.ticker}</strong> · {formatMarketLabel(currentTask.market)} is queued · {lastUpdatedLabel}
                             </span>
                         </div>
-                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
+                        <AnalystLiveGrid analysts={analystCards} />
+                        <AgentResultsModule task={currentTask} nodeTokens={nodeTokens} activeNodes={activeNodes} liveStageResults={liveStageResults} activityLog={activityLog} />
                     </>
                 )}
 
@@ -474,7 +837,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             </span>
                             <span className="processing-bar__elapsed">⏱ {formatElapsed(currentTask.created_at)}</span>
                         </div>
-                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
+                        <AnalystLiveGrid analysts={analystCards} />
+                        <AgentResultsModule task={currentTask} nodeTokens={nodeTokens} activeNodes={activeNodes} liveStageResults={liveStageResults} activityLog={activityLog} />
                     </>
                 )}
 
@@ -496,7 +860,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             )}
                         </div>
 
-                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
+                        <AnalystLiveGrid analysts={analystCards} />
+                        <AgentResultsModule task={currentTask} nodeTokens={nodeTokens} activeNodes={activeNodes} liveStageResults={liveStageResults} activityLog={activityLog} />
 
                         {currentTask.analysis_report && (
                             <details className="analysis-details">
@@ -515,7 +880,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             <p>❌ Analysis failed</p>
                             {currentTask.error && <small>{currentTask.error}</small>}
                         </div>
-                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
+                        <AnalystLiveGrid analysts={analystCards} />
+                        <AgentResultsModule task={currentTask} nodeTokens={nodeTokens} activeNodes={activeNodes} liveStageResults={liveStageResults} activityLog={activityLog} />
                     </>
                 )}
 
@@ -525,7 +891,8 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             <p>⏹ Analysis cancelled</p>
                             {currentTask.error && <small>{currentTask.error}</small>}
                         </div>
-                        <AgentResultsModule task={currentTask} stageTokens={stageTokens} />
+                        <AnalystLiveGrid analysts={analystCards} />
+                        <AgentResultsModule task={currentTask} nodeTokens={nodeTokens} activeNodes={activeNodes} liveStageResults={liveStageResults} activityLog={activityLog} />
                     </>
                 )}
             </div>

@@ -20,18 +20,32 @@ const runTimeoutMs = Number.parseInt(process.env.OPENCLAW_GATEWAY_RUN_TIMEOUT_MS
 const registryPath = path.join(stateRoot, "registry.json");
 const runnerPath = path.join(projectRoot, "openclaw-gateway", "runner.ts");
 
-const ANALYST_KINDS = ["market", "social", "news", "fundamentals"];
+const ANALYST_KINDS = [
+  "market",
+  "social",
+  "news",
+  "fundamentals",
+  "portfolio_manager",
+  "trader_plan",
+  "risk_management",
+];
 const STAGE_LABELS = {
   market: "Market Analyst",
   social: "Social Analyst",
   news: "News Analyst",
   fundamentals: "Fundamentals Analyst",
+  portfolio_manager: "Portfolio Manager",
+  trader_plan: "Trader Plan",
+  risk_management: "Risk Management",
 };
 const SKILL_TEMPLATES = {
   market: ["financial-data", "market-structure"],
   social: ["sentiment-monitoring", "social-signal-triage"],
   news: ["news-synthesis", "macro-headlines"],
   fundamentals: ["fundamental-analysis", "financial-statements"],
+  portfolio_manager: ["portfolio-construction", "capital-allocation"],
+  trader_plan: ["trade-planning", "execution-playbooks"],
+  risk_management: ["risk-controls", "position-governance"],
 };
 
 async function pathExists(targetPath) {
@@ -189,6 +203,9 @@ function buildStagePrompt(payload) {
     ? payload.upstream_outputs
     : {};
   const instructions = payload.instructions || {};
+  if (typeof instructions.stage_prompt === "string" && instructions.stage_prompt.trim()) {
+    return instructions.stage_prompt;
+  }
   return [
     `You are the ${STAGE_LABELS[payload.stage_id] || payload.stage_id} for FinGOAT.`,
     `Produce a focused analyst report for ${payload.ticker} on ${payload.analysis_date}.`,
@@ -297,6 +314,7 @@ async function runOpenClawStage(payload, agentRecord) {
   const stderr = Buffer.concat(stderrChunks).toString("utf-8").trim();
   const stdout = Buffer.concat(stdoutChunks).toString("utf-8").trim();
   const completedAt = new Date().toISOString();
+  const durationSeconds = Math.max((Date.parse(completedAt) - Date.parse(startedAt)) / 1000, 0);
 
   if (exitResult.error) {
     throw new Error(`openclaw runner failed to start: ${String(exitResult.error)}`);
@@ -322,6 +340,7 @@ async function runOpenClawStage(payload, agentRecord) {
     label: STAGE_LABELS[payload.stage_id] || payload.stage_id,
     status: "completed",
     backend: "openclaw",
+    provider: payload.llm_config?.provider || "unknown",
     agent_id: agentRecord.openclaw_agent_id,
     session_key: sessionKey,
     content,
@@ -329,6 +348,7 @@ async function runOpenClawStage(payload, agentRecord) {
     raw_output: parsed,
     started_at: startedAt,
     completed_at: completedAt,
+    duration_seconds: durationSeconds,
     error: null,
   };
 }
@@ -393,6 +413,7 @@ async function handleRunStage(req, res) {
       label: STAGE_LABELS[stageId] || stageId,
       status: "failed",
       backend: "openclaw",
+      provider: body.llm_config?.provider || "unknown",
       agent_id: agentRecord.openclaw_agent_id,
       session_key: `agent:${agentRecord.openclaw_agent_id}:web:analysis:${body.task_id}:${stageId}`,
       content: null,

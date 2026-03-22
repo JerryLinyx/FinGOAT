@@ -28,6 +28,7 @@ export interface AnalysisStage {
     label: string
     status: 'pending' | 'processing' | 'completed' | 'failed' | 'cancelled'
     backend: string
+    provider: string
     summary?: string | null
     content?: unknown
     agent_id?: string | null
@@ -201,19 +202,36 @@ export interface OllamaModel {
 
 /** Events emitted by the SSE stream endpoint */
 export interface StreamEvent {
-    type: 'token' | 'stage_end' | 'task_complete' | 'task_error' | 'error'
+    type:
+        | 'token'
+        | 'stage_end'
+        | 'analyst_start'
+        | 'analyst_status'
+        | 'tool_start'
+        | 'tool_end'
+        | 'partial'
+        | 'analyst_complete'
+        | 'analyst_error'
+        | 'task_complete'
+        | 'task_error'
+        | 'error'
     /** Stage identifier (market, social, news, etc.) */
     stage_id?: string
     /** LangGraph node name */
     node?: string
     /** Token text (for type=token) */
     t?: string
+    text?: string
     /** JSON-serialised StageResult for type=stage_end */
     data?: string
     /** Task status for type=task_complete */
     status?: string
     /** Error message */
     error?: string
+    summary?: string
+    tool?: string
+    ts?: string
+    seq?: string
 }
 
 class TradingService {

@@ -66,6 +66,13 @@ SKIP_NODES: frozenset = frozenset({
     "tools_market", "tools_social", "tools_news", "tools_fundamentals",
 })
 
+TOOL_NODE_TO_STAGE: dict = {
+    "tools_market": "market",
+    "tools_social": "social",
+    "tools_news": "news",
+    "tools_fundamentals": "fundamentals",
+}
+
 
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
@@ -238,6 +245,7 @@ class TradingAgentsGraph:
         trade_date: str,
         token_callback: Callable[[str, str, str], Awaitable[None]],
         stage_end_callback: Callable[[str, Dict[str, Any]], Awaitable[None]],
+        event_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
     ) -> Dict[str, Any]:
         """Stream analysis via astream_events, calling callbacks per-token and per-node.
 
@@ -251,8 +259,21 @@ class TradingAgentsGraph:
             Final merged state dict
         """
         init_state = self.propagator.create_initial_state(company_name, trade_date)
+        return await self.propagate_from_state_streaming(
+            init_state,
+            token_callback=token_callback,
+            stage_end_callback=stage_end_callback,
+            event_callback=event_callback,
+        )
+
+    async def propagate_from_state_streaming(
+        self,
+        init_state: Dict[str, Any],
+        token_callback: Callable[[str, str, str], Awaitable[None]],
+        stage_end_callback: Callable[[str, Dict[str, Any]], Awaitable[None]],
+        event_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None,
+    ) -> Dict[str, Any]:
         base_args = self.propagator.get_graph_args()
-        # astream_events does NOT accept stream_mode — only pass config
         events_config = {"config": base_args.get("config", {})}
 
         last_state: Dict[str, Any] = dict(init_state) if isinstance(init_state, dict) else {}
@@ -267,6 +288,30 @@ class TradingAgentsGraph:
                 stage_id = NODE_TO_STAGE.get(node)
                 if token and stage_id:
                     await token_callback(stage_id, node, token)
+
+            elif etype == "on_tool_start":
+                stage_id = TOOL_NODE_TO_STAGE.get(node)
+                if event_callback and stage_id:
+                    await event_callback(
+                        {
+                            "type": "tool_start",
+                            "stage_id": stage_id,
+                            "node": node,
+                            "tool": event.get("name") or event.get("data", {}).get("name"),
+                        }
+                    )
+
+            elif etype == "on_tool_end":
+                stage_id = TOOL_NODE_TO_STAGE.get(node)
+                if event_callback and stage_id:
+                    await event_callback(
+                        {
+                            "type": "tool_end",
+                            "stage_id": stage_id,
+                            "node": node,
+                            "tool": event.get("name") or event.get("data", {}).get("name"),
+                        }
+                    )
 
             elif etype == "on_chain_end" and node not in SKIP_NODES:
                 output = event["data"].get("output", {})

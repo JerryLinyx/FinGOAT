@@ -1,6 +1,7 @@
 package controllers
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 	"testing"
@@ -166,5 +167,73 @@ func TestDefaultDataVendorConfigForMarket(t *testing.T) {
 	cn := defaultDataVendorConfigForMarket("cn")
 	if cn.CoreStockAPIs != "akshare" || cn.TechnicalIndicators != "akshare" || cn.FundamentalData != "akshare" || cn.NewsData != "akshare" {
 		t.Fatalf("unexpected cn defaults: %#v", cn)
+	}
+}
+
+func TestMarshalTaskConfigStripsLLMAPIKey(t *testing.T) {
+	req := &AnalysisRequest{
+		Market:        "us",
+		ExecutionMode: "default",
+		LLMConfig: &LLMConfig{
+			Provider:      "dashscope",
+			BaseURL:       "https://dashscope.aliyuncs.com/compatible-mode/v1",
+			QuickThinkLLM: "qwen3.5-flash",
+			DeepThinkLLM:  "qwen3.5-flash",
+			APIKey:        "super-secret-key",
+		},
+	}
+
+	raw, err := marshalTaskConfig(req)
+	if err != nil {
+		t.Fatalf("marshalTaskConfig returned error: %v", err)
+	}
+
+	if raw == nil {
+		t.Fatalf("marshalTaskConfig returned nil payload")
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(*raw), &decoded); err != nil {
+		t.Fatalf("failed to decode marshalled config: %v", err)
+	}
+
+	llmConfig, ok := decoded["llm_config"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected llm_config in marshalled payload")
+	}
+
+	if _, exists := llmConfig["api_key"]; exists {
+		t.Fatalf("expected api_key to be stripped from stored task config")
+	}
+}
+
+func TestParseStagesFromReportPreservesProvider(t *testing.T) {
+	report := map[string]interface{}{
+		"__stages": []interface{}{
+			map[string]interface{}{
+				"stage_id":          "market",
+				"label":             "Market Analyst",
+				"status":            "completed",
+				"backend":           "openclaw",
+				"provider":          "ollama",
+				"summary":           "Market summary",
+				"duration_seconds":  2.5,
+				"prompt_tokens":     10,
+				"completion_tokens": 20,
+				"total_tokens":      30,
+			},
+		},
+	}
+
+	stages := parseStagesFromReport(report)
+	if len(stages) != 1 {
+		t.Fatalf("expected 1 parsed stage, got %d", len(stages))
+	}
+
+	if stages[0].Provider != "ollama" {
+		t.Fatalf("expected provider %q, got %q", "ollama", stages[0].Provider)
+	}
+	if stages[0].Backend != "openclaw" {
+		t.Fatalf("expected backend %q, got %q", "openclaw", stages[0].Backend)
 	}
 }

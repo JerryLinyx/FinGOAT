@@ -60,7 +60,7 @@ class RiskDebateState(TypedDict):
     count: Annotated[int, "Length of the current conversation"]  # Conversation length
 
 
-class AgentState(MessagesState):
+class AgentState(MessagesState, total=False):
     company_of_interest: Annotated[str, "Company that we are interested in trading"]
     trade_date: Annotated[str, "What date we are trading at"]
 
@@ -87,3 +87,6 @@ class AgentState(MessagesState):
         RiskDebateState, "Current state of the debate on evaluating risk"
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
+    __stage_usage: Annotated[dict, "Aggregated per-stage usage metadata"]
+    __stage_times: Annotated[dict, "Aggregated per-stage duration metadata"]
+    __stages: Annotated[list, "Structured StageResult-compatible stage snapshots"]

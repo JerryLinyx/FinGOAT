@@ -2,12 +2,23 @@ import { useEffect, useMemo, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { AnalysisTask } from '../services/tradingService'
-import { AGENT_STAGES, buildStageProgress, firstStageWithContent, type AgentStageKey } from './agentStages'
+import {
+  AGENT_STAGES, buildStageProgress, firstStageWithContent,
+  type AgentStageKey, type ActivityEntry,
+  type LiveStageResult, NODE_TO_STAGE,
+} from './agentStages'
 import { AgentFlowGraph } from './AgentFlowGraph'
+import { AgentDashboard } from './AgentDashboard'
 
 interface AgentResultsModuleProps {
   task?: AnalysisTask | null
-  stageTokens?: Map<string, string>
+  /** Tokens keyed by LangGraph node name e.g. "Bull Researcher" */
+  nodeTokens?: Map<string, string>
+  /** Set of currently-active LangGraph node names */
+  activeNodes?: Set<string>
+  /** Parsed stage_end stats, available immediately from SSE (no REST wait) */
+  liveStageResults?: Map<string, LiveStageResult>
+  activityLog?: ActivityEntry[]
 }
 
 const formatDuration = (seconds?: number) => {
@@ -74,10 +85,43 @@ function extractMarkdownText(content: unknown): string {
 
 // ── Main component ────────────────────────────────────────────────────────────
 
-export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProps) {
-  const stages = useMemo(() => buildStageProgress(task), [task])
+export function AgentResultsModule({ task, nodeTokens, activeNodes, liveStageResults, activityLog = [] }: AgentResultsModuleProps) {
+  // Merge REST-polled stages with immediately-parsed stage_end stats
+  const stages = useMemo(() => {
+    const base = buildStageProgress(task)
+    if (!liveStageResults || liveStageResults.size === 0) return base
+    return base.map(stage => {
+      const live = liveStageResults.get(stage.key)
+      if (!live) return stage
+      return {
+        ...stage,
+        // Override stats only, NOT status (status comes from canonical REST data)
+        durationSeconds:  live.durationSeconds  ?? stage.durationSeconds,
+        promptTokens:     live.promptTokens     ?? stage.promptTokens,
+        completionTokens: live.completionTokens ?? stage.completionTokens,
+        totalTokens:      live.totalTokens      ?? stage.totalTokens,
+        llmCalls:         live.llmCalls         ?? stage.llmCalls,
+        failedCalls:      live.failedCalls      ?? stage.failedCalls,
+        latencyMs:        live.latencyMs        ?? stage.latencyMs,
+        summary:          live.summary          ?? stage.summary,
+      }
+    })
+  }, [task, liveStageResults])
+
+  // Derive stageTokens (keyed by stage_id) from nodeTokens for Stage List / Flow Graph
+  // — concatenates all node tokens for the same stage (acceptable for snippet preview)
+  const stageTokens = useMemo(() => {
+    if (!nodeTokens) return new Map<string, string>()
+    const map = new Map<string, string>()
+    for (const [node, tokens] of nodeTokens) {
+      const sid = NODE_TO_STAGE[node]
+      if (!sid) continue
+      map.set(sid, (map.get(sid) ?? '') + tokens)
+    }
+    return map
+  }, [nodeTokens])
   const [selectedStage, setSelectedStage] = useState<AgentStageKey | null>(null)
-  const [viewMode, setViewMode] = useState<'stages' | 'graph'>('stages')
+  const [viewMode, setViewMode] = useState<'dashboard' | 'stages' | 'graph'>('dashboard')
 
   useEffect(() => {
     if (!selectedStage) {
@@ -111,7 +155,11 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
   // Determine what to show in the detail panel
   const liveTokenText = stageTokens?.get(activeStage.key) ?? ''
   const finalMarkdown = liveTokenText || extractMarkdownText(activeStage.content)
-  const isStreaming = activeStage.status === 'processing' && liveTokenText.length > 0
+  // A stage is "live streaming" if any node belonging to it is in activeNodes
+  const stageIsActive = activeNodes
+    ? [...activeNodes].some(n => NODE_TO_STAGE[n] === activeStage.key)
+    : activeStage.status === 'processing'
+  const isStreaming = stageIsActive && liveTokenText.length > 0
 
   return (
     <div className="agent-results-module">
@@ -130,6 +178,13 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
       <div className="arm-tabs" style={{ gridColumn: '1 / -1' }}>
         <button
           type="button"
+          className={viewMode === 'dashboard' ? 'arm-tab--active' : ''}
+          onClick={() => setViewMode('dashboard')}
+        >
+          📊 Dashboard
+        </button>
+        <button
+          type="button"
           className={viewMode === 'stages' ? 'arm-tab--active' : ''}
           onClick={() => setViewMode('stages')}
         >
@@ -143,6 +198,20 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
           🔀 Flow Graph
         </button>
       </div>
+
+      {/* ── Dashboard view ── */}
+      {viewMode === 'dashboard' && (
+        <div style={{ gridColumn: '1 / -1' }}>
+          <AgentDashboard
+            stages={stages}
+            activityLog={activityLog}
+            nodeTokens={nodeTokens}
+            activeNodes={activeNodes}
+            selectedStage={selectedStage}
+            onSelectStage={(key) => setSelectedStage(key)}
+          />
+        </div>
+      )}
 
       {/* ── Stage List view ── */}
       {viewMode === 'stages' && (
@@ -171,7 +240,9 @@ export function AgentResultsModule({ task, stageTokens }: AgentResultsModuleProp
                   </span>
                 </div>
                 {stage.backend && (
-                  <div className="agent-stage-card__duration">{stage.backend === 'openclaw' ? 'OpenClaw' : 'Default'}</div>
+                  <div className="agent-stage-card__duration">
+                    {stage.backend === 'openclaw' ? 'OpenClaw' : stage.backend === 'process' ? 'Process' : 'Default'}
+                  </div>
                 )}
                 {stage.durationSeconds !== undefined && (
                   <div className="agent-stage-card__duration">{formatDuration(stage.durationSeconds)}</div>

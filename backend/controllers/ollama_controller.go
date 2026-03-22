@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -22,12 +23,25 @@ type ollamaTagsResponse struct {
 func normalizeOllamaBaseURL(raw string) string {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
+		if isRunningInDocker() {
+			return "http://host.docker.internal:11434"
+		}
 		return "http://localhost:11434"
 	}
 
 	parsed, err := url.Parse(trimmed)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
+		if isRunningInDocker() {
+			return "http://host.docker.internal:11434"
+		}
 		return "http://localhost:11434"
+	}
+
+	if isRunningInDocker() {
+		host := strings.ToLower(parsed.Hostname())
+		if host == "localhost" || host == "127.0.0.1" {
+			parsed.Host = strings.Replace(parsed.Host, parsed.Hostname(), "host.docker.internal", 1)
+		}
 	}
 
 	parsed.Path = strings.TrimSuffix(parsed.Path, "/")
@@ -35,6 +49,11 @@ func normalizeOllamaBaseURL(raw string) string {
 	parsed.RawQuery = ""
 	parsed.Fragment = ""
 	return strings.TrimRight(parsed.String(), "/")
+}
+
+func isRunningInDocker() bool {
+	_, err := os.Stat("/.dockerenv")
+	return err == nil
 }
 
 // GetOllamaModels proxies a lightweight model discovery call to the configured

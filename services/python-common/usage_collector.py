@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
 from redis import Redis
+from provider_usage import normalize_usage
 
 logger = logging.getLogger(__name__)
 
@@ -89,45 +90,18 @@ class UsageCollector:
         end_time = time.time()
         latency_ms = int((end_time - start_time) * 1000)
 
+        result_model = self.model
         prompt_tokens = 0
         completion_tokens = 0
         total_tokens = 0
 
         if result is not None and error is None:
-            # Try LangChain's usage_metadata (preferred path)
-            usage = getattr(result, "usage_metadata", None)
-            if usage and isinstance(usage, dict):
-                prompt_tokens = (
-                    usage.get("input_tokens", 0)
-                    or usage.get("prompt_tokens", 0)
-                    or 0
-                )
-                completion_tokens = (
-                    usage.get("output_tokens", 0)
-                    or usage.get("completion_tokens", 0)
-                    or 0
-                )
-                total_tokens = usage.get("total_tokens", 0) or (
-                    prompt_tokens + completion_tokens
-                )
-            else:
-                # Fallback: response_metadata
-                resp_meta = getattr(result, "response_metadata", {}) or {}
-                token_usage = (
-                    resp_meta.get("token_usage", resp_meta.get("usage", {})) or {}
-                )
-                if isinstance(token_usage, dict):
-                    prompt_tokens = token_usage.get("prompt_tokens", 0) or 0
-                    completion_tokens = token_usage.get("completion_tokens", 0) or 0
-                    total_tokens = token_usage.get("total_tokens", 0) or (
-                        prompt_tokens + completion_tokens
-                    )
-
-        # Determine model from result if available
-        result_model = self.model
-        resp_meta = getattr(result, "response_metadata", {}) or {}
-        if isinstance(resp_meta, dict) and resp_meta.get("model_name"):
-            result_model = resp_meta["model_name"]
+            usage = normalize_usage(self.provider, result)
+            prompt_tokens = usage.prompt_tokens
+            completion_tokens = usage.completion_tokens
+            total_tokens = usage.total_tokens
+            if usage.model:
+                result_model = usage.model
 
         event = UsageEvent(
             task_id=self.task_id,

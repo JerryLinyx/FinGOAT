@@ -41,6 +41,9 @@ Commit messages should reference the stable ADR ID when implementation work land
 | [ADR-036](./ADR-036_2026-03-19-qwen35-flash-thread-lock-pickle-fix.md) | 2026-03-19 | decision | qwen3.5-flash Thread Lock Pickle Fix | active |
 | [ADR-037](./ADR-037_2026-03-19-stage-usage-and-token-visibility.md) | 2026-03-19 | decision | 2026-03-19 — Stage Usage And Token Visibility | active |
 | [ADR-038](./ADR-038_2026-03-19-user-profile-and-byok-implementation.md) | 2026-03-19 | decision | User Profile And BYOK Implementation | active |
+| [ADR-041](./ADR-041_2026-03-21-hard-cancel-running-analysis.md) | 2026-03-21 | decision | 2026-03-21 Hard Cancel for Running Analysis | active |
+| [ADR-042](./ADR-042_2026-03-21-top-level-analyst-subprocess-streaming.md) | 2026-03-21 | decision | 2026-03-21 Top-Level Analyst Subprocess Streaming | active |
+| [ADR-044](./ADR-044_2026-03-22-runtime-unification-and-openclaw-7-of-9.md) | 2026-03-22 | decision | 2026-03-22 Runtime Unification And OpenClaw 7-of-9 Rollout | active |
 
 ## Requirements
 
@@ -62,3 +65,5 @@ Commit messages should reference the stable ADR ID when implementation work land
 | [ADR-033](./ADR-033_2026-03-19-full-repo-devlog-sync.md) | 2026-03-19 | review | 2026-03-19 Full Repo Devlog Sync | active |
 | [ADR-035](./ADR-035_2026-03-19-product-gap-and-vnext-priorities.md) | 2026-03-19 | review | 2026-03-19 — Product Gap And VNext Priorities | active |
 | [ADR-039](./ADR-039_2026-03-19-v014-release-closeout.md) | 2026-03-19 | review | v0.1.4 Release Closeout | active |
+| [ADR-040](./ADR-040_2026-03-21-analysis-chain-secret-hygiene-review.md) | 2026-03-21 | review | 2026-03-21 Analysis Chain Secret Hygiene Review | active |
+| [ADR-043](./ADR-043_2026-03-22-docker-compose-rebuild-validation.md) | 2026-03-22 | review | 2026-03-22 Docker Compose Rebuild Validation | active |

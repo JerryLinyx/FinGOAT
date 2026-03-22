@@ -121,6 +121,7 @@ type AnalysisTaskStage struct {
 	Label            string      `json:"label"`
 	Status           string      `json:"status"`
 	Backend          string      `json:"backend"`
+	Provider         string      `json:"provider,omitempty"`
 	Summary          string      `json:"summary,omitempty"`
 	Content          interface{} `json:"content,omitempty"`
 	AgentID          string      `json:"agent_id,omitempty"`
@@ -383,6 +384,13 @@ func normalizeExecutionMode(raw string) string {
 }
 
 func marshalTaskConfig(request *AnalysisRequest) (*string, error) {
+	var sanitizedLLMConfig *LLMConfig
+	if request.LLMConfig != nil {
+		copy := *request.LLMConfig
+		copy.APIKey = ""
+		sanitizedLLMConfig = &copy
+	}
+
 	config := struct {
 		Market           string            `json:"market,omitempty"`
 		ExecutionMode    string            `json:"execution_mode,omitempty"`
@@ -391,7 +399,7 @@ func marshalTaskConfig(request *AnalysisRequest) (*string, error) {
 	}{
 		Market:           normalizeMarket(request.Market),
 		ExecutionMode:    normalizeExecutionMode(request.ExecutionMode),
-		LLMConfig:        request.LLMConfig,
+		LLMConfig:        sanitizedLLMConfig,
 		DataVendorConfig: request.DataVendorConfig,
 	}
 
@@ -439,6 +447,7 @@ func parseStagesFromReport(report map[string]interface{}) []AnalysisTaskStage {
 			Label:       toStringValue(stageMap["label"]),
 			Status:      toStringValue(stageMap["status"]),
 			Backend:     toStringValue(stageMap["backend"]),
+			Provider:    toStringValue(stageMap["provider"]),
 			Summary:     toStringValue(stageMap["summary"]),
 			Content:     stageMap["content"],
 			AgentID:     toStringValue(stageMap["agent_id"]),

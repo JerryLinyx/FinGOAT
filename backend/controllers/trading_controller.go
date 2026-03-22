@@ -75,6 +75,45 @@ func extractTradingServiceError(body []byte, statusCode int) string {
 	return fmt.Sprintf("trading service returned status %d", statusCode)
 }
 
+func hydrateAnalysisRequestSecrets(userID uint, req *AnalysisRequest) error {
+	if req == nil {
+		return nil
+	}
+
+	req.Market = normalizeMarket(req.Market)
+
+	if req.LLMConfig != nil {
+		req.LLMConfig.Provider = normalizeLLMProviderName(req.LLMConfig.Provider)
+		if req.LLMConfig.Provider == "ollama" {
+			req.LLMConfig.BaseURL = normalizeOllamaBaseURL(req.LLMConfig.BaseURL)
+			req.LLMConfig.APIKey = ""
+		} else if req.LLMConfig.Provider != "" {
+			key, keyErr := lookupDecryptedKey(userID, req.LLMConfig.Provider)
+			if keyErr != nil {
+				return fmt.Errorf("failed to retrieve API key")
+			}
+			if key == "" {
+				return fmt.Errorf("no API key configured for provider %q — add it in Profile & API Keys", req.LLMConfig.Provider)
+			}
+			req.LLMConfig.APIKey = key
+		}
+	}
+
+	req.AlphaVantageAPIKey = ""
+	if req.Market == "us" {
+		avKey, avErr := lookupDecryptedKey(userID, "alpha_vantage")
+		if avErr != nil {
+			return fmt.Errorf("failed to retrieve alpha vantage key")
+		}
+		if avKey == "" {
+			return fmt.Errorf("no Alpha Vantage API key configured — add it in Profile & API Keys")
+		}
+		req.AlphaVantageAPIKey = avKey
+	}
+
+	return nil
+}
+
 // RequestAnalysis submits a new trading analysis request
 func RequestAnalysis(c *gin.Context) {
 	var req AnalysisRequest
@@ -125,47 +164,23 @@ func RequestAnalysis(c *gin.Context) {
 		}
 	}
 
+	if err := hydrateAnalysisRequestSecrets(userID.(uint), &req); err != nil {
+		statusCode := http.StatusBadRequest
+		if strings.HasPrefix(err.Error(), "failed to retrieve") {
+			statusCode = http.StatusInternalServerError
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
+
 	var llmProvider, llmModel, llmBaseURL string
 	if req.LLMConfig != nil {
-		req.LLMConfig.Provider = normalizeLLMProviderName(req.LLMConfig.Provider)
 		llmProvider = req.LLMConfig.Provider
 		llmModel = req.LLMConfig.QuickThinkLLM
 		if llmModel == "" {
 			llmModel = req.LLMConfig.DeepThinkLLM
 		}
 		llmBaseURL = req.LLMConfig.BaseURL
-
-		// Inject the user's stored API key for non-local providers.
-		if llmProvider != "" && llmProvider != "ollama" {
-			key, keyErr := lookupDecryptedKey(userID.(uint), llmProvider)
-			if keyErr != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve API key"})
-				return
-			}
-			if key == "" {
-				c.JSON(http.StatusBadRequest, gin.H{
-					"error": fmt.Sprintf("no API key configured for provider %q — add it in Profile & API Keys", llmProvider),
-				})
-				return
-			}
-			req.LLMConfig.APIKey = key
-		}
-	}
-
-	if req.Market == "us" {
-		// Inject Alpha Vantage key — still required for US analysis runs.
-		avKey, avErr := lookupDecryptedKey(userID.(uint), "alpha_vantage")
-		if avErr != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to retrieve alpha vantage key"})
-			return
-		}
-		if avKey == "" {
-			c.JSON(http.StatusBadRequest, gin.H{
-				"error": "no Alpha Vantage API key configured — add it in Profile & API Keys",
-			})
-			return
-		}
-		req.AlphaVantageAPIKey = avKey
 	}
 
 	configJSON, err := marshalTaskConfig(&req)
@@ -559,6 +574,14 @@ func ResumeAnalysis(c *gin.Context) {
 	req.Market = normalizeMarket(task.Market)
 	req.Date = task.AnalysisDate
 	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
+	if err := hydrateAnalysisRequestSecrets(task.UserID, req); err != nil {
+		statusCode := http.StatusBadRequest
+		if strings.HasPrefix(err.Error(), "failed to retrieve") {
+			statusCode = http.StatusInternalServerError
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error()})
+		return
+	}
 
 	configJSON, err := marshalTaskConfig(req)
 	if err != nil {
@@ -572,6 +595,14 @@ func ResumeAnalysis(c *gin.Context) {
 	task.CompletedAt = nil
 	task.ProcessingTimeSeconds = 0
 	task.Decision = nil
+	if req.LLMConfig != nil {
+		task.LLMProvider = req.LLMConfig.Provider
+		task.LLMBaseURL = req.LLMConfig.BaseURL
+		task.LLMModel = req.LLMConfig.QuickThinkLLM
+		if task.LLMModel == "" {
+			task.LLMModel = req.LLMConfig.DeepThinkLLM
+		}
+	}
 
 	ctx := c.Request.Context()
 	runtime := &RuntimeTaskState{

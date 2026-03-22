@@ -17,6 +17,7 @@ DEFAULT_CONFIG = {
     "llm_temperature": float(os.getenv("LLM_TEMPERATURE", "0.2")),
     "llm_api_key": os.getenv("LLM_API_KEY"),  # optional override; otherwise provider-specific envs are used
     "execution_mode": os.getenv("TRADING_EXECUTION_MODE", "default"),
+    "use_unified_backend": os.getenv("USE_UNIFIED_BACKEND", "").strip().lower() in {"1", "true", "yes", "on"},
     "openclaw_gateway_url": os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:8011"),
     # Debate and discussion settings
     "max_debate_rounds": 1,

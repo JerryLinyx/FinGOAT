@@ -9,6 +9,12 @@ from langgraph.prebuilt import ToolNode
 
 from tradingagents.agents import *
 from tradingagents.agents.utils.agent_states import AgentState
+from tradingagents.runtime import (
+    LangGraphExecutionBackend,
+    OpenClawExecutionBackend,
+    build_stage_instructions,
+    build_stage_request,
+)
 
 from .conditional_logic import ConditionalLogic
 
@@ -44,6 +50,20 @@ class GraphSetup:
         self.config = config
         self.openclaw_adapter = openclaw_adapter
         self.usage_collector = usage_collector
+        self.langgraph_backend = LangGraphExecutionBackend(
+            llms={
+                "portfolio_manager": self.deep_thinking_llm,
+                "trader_plan": self.quick_thinking_llm,
+                "risk_management": self.deep_thinking_llm,
+            },
+            memories={
+                "portfolio_manager": self.invest_judge_memory,
+                "trader_plan": self.trader_memory,
+                "risk_management": self.risk_manager_memory,
+            },
+            usage_collector=self.usage_collector,
+        )
+        self.openclaw_backend = OpenClawExecutionBackend(self.openclaw_adapter)
 
     def setup_graph(
         self, selected_analysts=["market", "social", "news", "fundamentals"]
@@ -57,7 +77,11 @@ class GraphSetup:
                 - "news": News analyst
                 - "fundamentals": Fundamentals analyst
         """
-        if len(selected_analysts) == 0:
+        allow_empty_analysts = bool(self.config.get("allow_empty_analysts"))
+        top_level_only = bool(self.config.get("top_level_only"))
+        use_unified_backend = bool(self.config.get("use_unified_backend"))
+
+        if len(selected_analysts) == 0 and not allow_empty_analysts:
             raise ValueError("Trading Agents Graph Setup Error: no analysts selected!")
 
         # Create analyst nodes
@@ -79,6 +103,79 @@ class GraphSetup:
         def build_openclaw_node(analyst_type: str):
             def node(state):
                 return self.openclaw_adapter.run_stage(analyst_type, state)
+
+            return node
+
+        def build_unified_stage_node(stage_id: str, backend_name: str, memory):
+            report_key_by_stage_id = {
+                "portfolio_manager": "investment_plan",
+                "trader_plan": "trader_investment_plan",
+                "risk_management": "final_trade_decision",
+            }
+            label_by_stage_id = {
+                "portfolio_manager": "Research Manager",
+                "trader_plan": "Trader",
+                "risk_management": "Risk Judge",
+            }
+            provider = str(self.config.get("llm_provider") or "unknown")
+
+            def node(state):
+                request = build_stage_request(
+                    task_id=str(self.config.get("task_id") or ""),
+                    user_id=self.config.get("user_id"),
+                    stage_id=stage_id,
+                    ticker=str(state.get("company_of_interest") or ""),
+                    analysis_date=str(state.get("trade_date") or ""),
+                    market=str(self.config.get("market") or "us"),
+                    state=state,
+                    llm_config={
+                        "provider": self.config.get("llm_provider"),
+                        "backend_url": self.config.get("backend_url"),
+                        "quick_think_llm": self.config.get("quick_think_llm"),
+                        "deep_think_llm": self.config.get("deep_think_llm"),
+                    },
+                    data_vendor_config=self.config.get("data_vendors") or {},
+                    instructions=build_stage_instructions(stage_id, state, memory),
+                )
+                backend = self.openclaw_backend if backend_name == "openclaw" else self.langgraph_backend
+                result = backend.run_stage(request)
+                report_key = report_key_by_stage_id[stage_id]
+                node_label = label_by_stage_id[stage_id]
+                output = {
+                    report_key: result.content,
+                    f"__stage_backend.{report_key}": result.backend,
+                    f"__stage_provider.{report_key}": result.provider or provider,
+                    f"__stage_summary.{report_key}": result.summary,
+                    f"__stage_raw_output.{report_key}": result.raw_output,
+                    f"__stage_started_at.{report_key}": result.started_at,
+                    f"__stage_completed_at.{report_key}": result.completed_at,
+                    f"__stage_error.{report_key}": result.error,
+                }
+                if result.agent_id:
+                    output[f"__stage_agent_id.{report_key}"] = result.agent_id
+                if result.session_key:
+                    output[f"__stage_session_key.{report_key}"] = result.session_key
+                now = time.time()
+                output[f"__stage_starts.{node_label}"] = now - (result.duration_seconds or 0.0)
+                output[f"__stage_ends.{node_label}"] = now
+                usage = {
+                    key: value
+                    for key, value in {
+                        "prompt_tokens": result.prompt_tokens,
+                        "completion_tokens": result.completion_tokens,
+                        "total_tokens": result.total_tokens,
+                        "llm_calls": result.llm_calls,
+                        "failed_calls": result.failed_calls,
+                        "latency_ms": result.latency_ms,
+                    }.items()
+                    if isinstance(value, (int, float))
+                }
+                if usage:
+                    output["__stage_usage"] = {
+                        **(state.get("__stage_usage") or {}),
+                        stage_id: usage,
+                    }
+                return output
 
             return node
 
@@ -140,6 +237,29 @@ class GraphSetup:
             self.deep_thinking_llm, self.risk_manager_memory, usage_collector=_collector
         )
 
+        downstream_backend = "default"
+        if execution_mode == "openclaw":
+            downstream_backend = "openclaw"
+        elif use_unified_backend:
+            downstream_backend = "langgraph"
+
+        if downstream_backend != "default":
+            research_manager_node = build_unified_stage_node(
+                "portfolio_manager",
+                downstream_backend,
+                self.invest_judge_memory,
+            )
+            trader_node = build_unified_stage_node(
+                "trader_plan",
+                downstream_backend,
+                self.trader_memory,
+            )
+            risk_manager_node = build_unified_stage_node(
+                "risk_management",
+                downstream_backend,
+                self.risk_manager_memory,
+            )
+
         # Create workflow
         workflow = StateGraph(AgentState)
 
@@ -170,9 +290,10 @@ class GraphSetup:
             if analyst_type in tool_nodes:
                 workflow.add_node(f"tools_{analyst_type}", tool_nodes[analyst_type])
 
-        workflow.add_node("Analyst Join", lambda state: state)
-        workflow.add_node("Analyst Wait", lambda state: state)
-        workflow.add_node("Msg Clear Analysts", create_msg_delete())
+        if selected_analysts:
+            workflow.add_node("Analyst Join", lambda state: state)
+            workflow.add_node("Analyst Wait", lambda state: state)
+            workflow.add_node("Msg Clear Analysts", create_msg_delete())
 
         # Add other nodes
         workflow.add_node("Bull Researcher", timed_node("Bull Researcher", bull_researcher_node))
@@ -201,33 +322,37 @@ class GraphSetup:
         # Define edges
         # Start all independent analysts in parallel. Synchronize them through
         # an explicit join node before entering the downstream debate workflow.
-        for analyst_type in selected_analysts:
-            workflow.add_edge(START, f"{analyst_type.capitalize()} Analyst")
+        if selected_analysts:
+            for analyst_type in selected_analysts:
+                workflow.add_edge(START, f"{analyst_type.capitalize()} Analyst")
 
-        for analyst_type in selected_analysts:
-            current_analyst = f"{analyst_type.capitalize()} Analyst"
-            if analyst_type in tool_nodes:
-                current_tools = f"tools_{analyst_type}"
+            for analyst_type in selected_analysts:
+                current_analyst = f"{analyst_type.capitalize()} Analyst"
+                if analyst_type in tool_nodes:
+                    current_tools = f"tools_{analyst_type}"
 
-                workflow.add_conditional_edges(
-                    current_analyst,
-                    getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
-                    [current_tools, "Analyst Join"],
-                )
-                workflow.add_edge(current_tools, current_analyst)
-            else:
-                workflow.add_edge(current_analyst, "Analyst Join")
+                    workflow.add_conditional_edges(
+                        current_analyst,
+                        getattr(self.conditional_logic, f"should_continue_{analyst_type}"),
+                        [current_tools, "Analyst Join"],
+                    )
+                    workflow.add_edge(current_tools, current_analyst)
+                else:
+                    workflow.add_edge(current_analyst, "Analyst Join")
 
-        workflow.add_conditional_edges(
-            "Analyst Join",
-            should_proceed_all_analysts,
-            {
-                "proceed": "Msg Clear Analysts",
-                "wait": "Analyst Wait",
-            },
-        )
-        workflow.add_edge("Analyst Wait", "Analyst Join")
-        workflow.add_edge("Msg Clear Analysts", "Bull Researcher")
+            workflow.add_conditional_edges(
+                "Analyst Join",
+                should_proceed_all_analysts,
+                {
+                    "proceed": END if top_level_only else "Msg Clear Analysts",
+                    "wait": "Analyst Wait",
+                },
+            )
+            workflow.add_edge("Analyst Wait", "Analyst Join")
+            if not top_level_only:
+                workflow.add_edge("Msg Clear Analysts", "Bull Researcher")
+        else:
+            workflow.add_edge(START, "Bull Researcher")
 
         # Add remaining edges
         workflow.add_conditional_edges(

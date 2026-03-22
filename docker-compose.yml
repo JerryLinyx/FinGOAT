@@ -43,6 +43,8 @@ services:
       dockerfile: Dockerfile
     container_name: fingoat-backend
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     # No host port exposed — nginx reverse-proxies /api/ to backend:3000.
     # ports:
     #   - "3000:3000"
@@ -57,6 +59,7 @@ services:
       - REDIS_ADDR=redis:6379
       - TRADING_SERVICE_URL=http://trading-service:8001
       - MARKET_DATA_SERVICE_URL=http://market-data-service:8002
+      - OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-http://host.docker.internal:18789}
       - ALPHA_VANTAGE_API_KEY=${ALPHA_VANTAGE_API_KEY:-}
       # JWT signing secret — override with a strong random value in production.
       - JWT_SECRET=${JWT_SECRET:-fingoat-dev-jwt-secret-DO-NOT-USE-IN-PROD}
@@ -104,6 +107,7 @@ services:
       - LLM_DEEP_MODEL=gemma3:1b
       - LLM_TIMEOUT=120
       - LLM_TEMPERATURE=0.2
+      - OPENCLAW_GATEWAY_URL=${OPENCLAW_GATEWAY_URL:-http://host.docker.internal:18789}
       - FRONTEND_ORIGINS=${FRONTEND_ORIGINS:-http://localhost,http://localhost:8080}
       - DEBUG=true
       - LOG_LEVEL=INFO

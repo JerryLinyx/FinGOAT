@@ -8,7 +8,9 @@ multi-agent trading analysis tasks.
 import asyncio
 import json
 import logging
+import multiprocessing
 import os
+import queue
 import re
 import sys
 import threading
@@ -47,6 +49,7 @@ from marketdata.services.snapshot_service import get_terminal_snapshot
 
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.graph.propagation import Propagator
 
 # Load service-local environment variables for direct local runs.
 load_dotenv(SERVICE_DIR / ".env")
@@ -212,6 +215,7 @@ class StageResult(BaseModel):
     label: str
     status: str
     backend: str
+    provider: str
     summary: Optional[str] = None
     content: Optional[Any] = None
     agent_id: Optional[str] = None
@@ -389,6 +393,28 @@ def runtime_state_key(task_id: str) -> str:
     return f"{RUNTIME_KEY_PREFIX}{task_id}"
 
 
+def _json_field(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return json.dumps(make_json_safe(value), default=str)
+
+
+def append_stream_event(client: Redis, stream_key: str, payload: Dict[str, Any]) -> None:
+    normalized = {key: _json_field(value) for key, value in payload.items() if value is not None}
+    client.xadd(stream_key, normalized, maxlen=200_000)
+
+
+def expire_streams(client: Redis, *stream_keys: str) -> None:
+    for key in stream_keys:
+        if key:
+            try:
+                client.expire(key, STREAM_TTL_SECONDS)
+            except Exception:
+                logger.warning("Failed to expire stream %s", key, exc_info=True)
+
+
 def resolve_redis_connection_config() -> Dict[str, Any]:
     redis_addr = os.getenv("REDIS_ADDR", "").strip()
     if redis_addr:
@@ -543,6 +569,14 @@ STAGE_DEFINITIONS = [
 STAGE_ORDER = [stage["report_key"] for stage in STAGE_DEFINITIONS]
 STAGE_LABELS = {stage["report_key"]: stage["label"] for stage in STAGE_DEFINITIONS}
 STAGE_IDS_BY_REPORT_KEY = {stage["report_key"]: stage["stage_id"] for stage in STAGE_DEFINITIONS}
+REPORT_KEY_BY_STAGE_ID = {stage["stage_id"]: stage["report_key"] for stage in STAGE_DEFINITIONS}
+TOP_LEVEL_ANALYST_STAGE_IDS = ("market", "social", "news", "fundamentals")
+STAGE_NODE_NAMES = {
+    "market": "Market Analyst",
+    "social": "Social Analyst",
+    "news": "News Analyst",
+    "fundamentals": "Fundamentals Analyst",
+}
 
 NODE_STAGE_MAP = {
     "Market Analyst": "market_report",
@@ -560,9 +594,14 @@ NODE_STAGE_MAP = {
 }
 
 
+def analyst_stream_key(task_id: str, stage_id: str) -> str:
+    return f"{STREAM_KEY_PREFIX}:{task_id}:analyst:{stage_id}"
+
+
 def build_config(request: AnalysisRequest) -> Dict[str, Any]:
     config = deepcopy(DEFAULT_CONFIG)
     config["execution_mode"] = request.execution_mode.value
+    config["use_unified_backend"] = os.getenv("USE_UNIFIED_BACKEND", "").strip().lower() in {"1", "true", "yes", "on"}
     config["task_id"] = request.task_id
     config["user_id"] = request.user_id
     config["market"] = request.market.value
@@ -604,13 +643,34 @@ def build_config(request: AnalysisRequest) -> Dict[str, Any]:
 # dataflows/openai.py, memory.py, etc. read env vars directly rather than the config dict,
 # so we must mirror the per-user key into the process environment before each analysis run.
 # This is safe because the worker processes tasks sequentially on a single thread.
-_PROVIDER_ENV_MAP: Dict[str, str] = {
-    "openai": "OPENAI_API_KEY",
-    "anthropic": "ANTHROPIC_API_KEY",
-    "google": "GOOGLE_API_KEY",
-    "deepseek": "DEEPSEEK_API_KEY",
-    "dashscope": "DASHSCOPE_API_KEY",
+_PROVIDER_ENV_ALIASES: Dict[str, tuple[str, ...]] = {
+    "openai": ("OPENAI_API_KEY",),
+    "anthropic": ("ANTHROPIC_API_KEY", "CLAUDE_API_KEY"),
+    "google": ("GOOGLE_API_KEY", "GEMINI_API_KEY"),
+    "deepseek": ("DEEPSEEK_API_KEY",),
+    "dashscope": ("DASHSCOPE_API_KEY",),
 }
+
+_KEY_ENV_NAMES = (
+    "ALPHA_VANTAGE_API_KEY",
+    "LLM_API_KEY",
+    "OPENAI_API_KEY",
+    "ANTHROPIC_API_KEY",
+    "CLAUDE_API_KEY",
+    "GOOGLE_API_KEY",
+    "GEMINI_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "DASHSCOPE_API_KEY",
+)
+_BASE_PROVIDER_ENV: Dict[str, Optional[str]] = {name: os.getenv(name) for name in _KEY_ENV_NAMES}
+
+
+def _restore_base_provider_env() -> None:
+    for name, value in _BASE_PROVIDER_ENV.items():
+        if value:
+            os.environ[name] = value
+        else:
+            os.environ.pop(name, None)
 
 
 def _inject_user_keys_to_env(config: Dict[str, Any]) -> None:
@@ -621,6 +681,8 @@ def _inject_user_keys_to_env(config: Dict[str, Any]) -> None:
     here once per analysis run so every sub-module can find the correct user key without
     needing to be refactored.
     """
+    _restore_base_provider_env()
+
     # Alpha Vantage — data provider key
     av_key = config.get("alpha_vantage_api_key", "")
     if av_key:
@@ -631,8 +693,7 @@ def _inject_user_keys_to_env(config: Dict[str, Any]) -> None:
     if llm_key:
         os.environ["LLM_API_KEY"] = llm_key
         provider = str(config.get("llm_provider", "")).lower()
-        env_var = _PROVIDER_ENV_MAP.get(provider)
-        if env_var:
+        for env_var in _PROVIDER_ENV_ALIASES.get(provider, ()):
             os.environ[env_var] = llm_key
 
 
@@ -774,6 +835,7 @@ def extract_stage_metadata(state: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
     metadata: Dict[str, Dict[str, Any]] = {}
     field_prefixes = {
         "__stage_backend.": "backend",
+        "__stage_provider.": "provider",
         "__stage_agent_id.": "agent_id",
         "__stage_session_key.": "session_key",
         "__stage_raw_output.": "raw_output",
@@ -835,6 +897,7 @@ def build_stage_results(
     task_status: str,
     total_elapsed: Optional[float] = None,
     execution_mode: str = ExecutionMode.DEFAULT.value,
+    provider: str = "unknown",
     task_error: Optional[str] = None,
     usage_collector: Optional[Any] = None,
 ) -> List[Dict[str, Any]]:
@@ -881,6 +944,7 @@ def build_stage_results(
                     ExecutionMode.OPENCLAW.value if execution_mode == ExecutionMode.OPENCLAW.value and stage["stage_id"] in {"market", "social", "news", "fundamentals"}
                     else ExecutionMode.DEFAULT.value
                 ),
+                "provider": meta.get("provider") or provider,
                 "summary": meta.get("summary") or _normalize_summary_text(content),
                 "content": content if content is not None else None,
                 "agent_id": meta.get("agent_id"),
@@ -908,6 +972,7 @@ def extract_analysis_report(
     *,
     task_status: str = TaskStatus.PROCESSING.value,
     execution_mode: str = ExecutionMode.DEFAULT.value,
+    provider: str = "unknown",
     task_error: Optional[str] = None,
     usage_collector: Optional[Any] = None,
 ) -> Dict[str, Any]:
@@ -947,6 +1012,7 @@ def extract_analysis_report(
                 task_status=task_status,
                 total_elapsed=total_elapsed,
                 execution_mode=execution_mode,
+                provider=provider,
                 task_error=task_error,
                 usage_collector=usage_collector,
             )
@@ -964,6 +1030,7 @@ def update_processing_checkpoint(
     state: Dict[str, Any],
     start_time: datetime,
     execution_mode: str,
+    provider: str,
     usage_collector: Optional[Any] = None,
 ) -> bool:
     latest_state = load_task_state(task_state["task_id"])
@@ -976,6 +1043,7 @@ def update_processing_checkpoint(
         elapsed,
         task_status=TaskStatus.PROCESSING.value,
         execution_mode=execution_mode,
+        provider=provider,
         usage_collector=usage_collector,
     )
     if not analysis_report:
@@ -1013,6 +1081,279 @@ def enqueue_analysis_request(request: AnalysisRequest) -> Dict[str, Any]:
     get_redis_client().lpush(QUEUE_KEY, json.dumps(payload))
 
     return task_state
+
+
+def merge_stage_result_into_state(state: Dict[str, Any], result: Dict[str, Any]) -> None:
+    stage_id = str(result["stage_id"])
+    report_key = str(result["report_key"])
+    node_name = STAGE_NODE_NAMES.get(stage_id, stage_id)
+
+    state[report_key] = result.get("content", "")
+    state[f"__stage_backend.{report_key}"] = result.get("backend") or "default"
+    state[f"__stage_provider.{report_key}"] = result.get("provider")
+    state[f"__stage_summary.{report_key}"] = result.get("summary")
+    state[f"__stage_started_at.{report_key}"] = result.get("started_at")
+    state[f"__stage_completed_at.{report_key}"] = result.get("completed_at")
+    state[f"__stage_raw_output.{report_key}"] = result.get("raw_output")
+    state[f"__stage_error.{report_key}"] = result.get("error")
+    state[f"__stage_starts.{node_name}"] = result.get("start_ts")
+    state[f"__stage_ends.{node_name}"] = result.get("end_ts")
+
+    usage_bucket = state.setdefault("__stage_usage", {})
+    usage = result.get("usage") or {}
+    if isinstance(usage, dict):
+        usage_bucket[stage_id] = {
+            key: int(value)
+            for key, value in usage.items()
+            if isinstance(value, (int, float))
+        }
+
+
+def _run_single_analyst_subprocess(stage_id: str, payload: str, result_queue) -> None:
+    request_payload = json.loads(payload)
+    request = AnalysisRequest(**request_payload)
+    if not request.task_id:
+        raise ValueError("queued request is missing task_id")
+
+    task_id = request.task_id
+    report_key = REPORT_KEY_BY_STAGE_ID[stage_id]
+    node_name = STAGE_NODE_NAMES[stage_id]
+    stream_key = analyst_stream_key(task_id, stage_id)
+    seq = 0
+
+    child_client = build_redis_client(socket_timeout=REDIS_SOCKET_TIMEOUT_SECONDS)
+    child_client.ping()
+
+    def emit(event_type: str, **fields: Any) -> None:
+        nonlocal seq
+        seq += 1
+        append_stream_event(
+            child_client,
+            stream_key,
+            {
+                "type": event_type,
+                "task_id": task_id,
+                "stage_id": stage_id,
+                "node": node_name,
+                "ts": utcnow_iso(),
+                "seq": seq,
+                **fields,
+            },
+        )
+
+    try:
+        latest_state = load_task_state(task_id)
+        if latest_state and latest_state.get("status") == TaskStatus.CANCELLED.value:
+            raise TaskCancelledError("analysis cancelled before analyst start")
+
+        config = build_config(request)
+        config["top_level_only"] = True
+        _inject_user_keys_to_env(config)
+
+        from usage_collector import UsageCollector
+
+        collector = UsageCollector(
+            task_id=task_id,
+            user_id=request.user_id or 0,
+            provider=str(config.get("llm_provider", "unknown")),
+            model=str(config.get("quick_think_llm", config.get("deep_think_llm", "unknown"))),
+            redis_client=child_client,
+        )
+
+        graph = TradingAgentsGraph(
+            selected_analysts=[stage_id],
+            debug=False,
+            config=config,
+            usage_collector=collector,
+        )
+
+        started_at = datetime.now(timezone.utc)
+        start_ts = time.time()
+        emit("analyst_start", status=TaskStatus.PROCESSING.value)
+
+        async def token_cb(_stage_id: str, _node: str, token: str) -> None:
+            latest = load_task_state(task_id)
+            if latest and latest.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledError("analysis cancelled by user")
+            emit("token", text=token, t=token)
+
+        async def stage_end_cb(_stage_id: str, state_snapshot: Dict[str, Any]) -> None:
+            latest = load_task_state(task_id)
+            if latest and latest.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledError("analysis cancelled by user")
+
+            report = state_snapshot.get(report_key)
+            summary = _normalize_summary_text(report)
+            usage = collector.stage_usage_summary().get(stage_id, {})
+            emit(
+                "partial",
+                summary=summary or "",
+                content=make_json_safe(report),
+                usage_delta=usage,
+            )
+
+        async def event_cb(event: Dict[str, Any]) -> None:
+            latest = load_task_state(task_id)
+            if latest and latest.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledError("analysis cancelled by user")
+            emit(event.get("type", "analyst_status"), tool=event.get("tool"))
+
+        final_state = asyncio.run(
+            graph.propagate_streaming(
+                request.ticker,
+                request.date,
+                token_callback=token_cb,
+                stage_end_callback=stage_end_cb,
+                event_callback=event_cb,
+            )
+        )
+
+        completed_at = datetime.now(timezone.utc)
+        end_ts = time.time()
+        elapsed = max((completed_at - started_at).total_seconds(), 0.0)
+        report = final_state.get(report_key)
+        analysis_report = extract_analysis_report(
+            final_state,
+            elapsed,
+            task_status=TaskStatus.COMPLETED.value,
+            execution_mode=request.execution_mode.value,
+            provider=str(config.get("llm_provider", "unknown")),
+            usage_collector=collector,
+        )
+        stage_result = next(
+            (stage for stage in analysis_report.get("__stages", []) if stage.get("stage_id") == stage_id),
+            None,
+        ) or {
+            "stage_id": stage_id,
+            "label": STAGE_LABELS.get(report_key, stage_id),
+            "status": TaskStatus.COMPLETED.value,
+            "backend": "process",
+            "summary": _normalize_summary_text(report),
+            "content": make_json_safe(report),
+            "started_at": started_at.isoformat(),
+            "completed_at": completed_at.isoformat(),
+            "duration_seconds": elapsed,
+        }
+        stage_result["backend"] = stage_result.get("backend") or "default"
+        stage_result["provider"] = stage_result.get("provider") or str(config.get("llm_provider", "unknown"))
+
+        result_payload = {
+            "stage_id": stage_id,
+            "report_key": report_key,
+            "provider": stage_result.get("provider"),
+            "content": make_json_safe(report),
+            "summary": stage_result.get("summary"),
+            "raw_output": stage_result.get("raw_output"),
+            "error": stage_result.get("error"),
+            "stage_result": stage_result,
+            "usage": (analysis_report.get("__stage_usage", {}) or {}).get(stage_id, {}),
+            "started_at": stage_result.get("started_at") or started_at.isoformat(),
+            "completed_at": stage_result.get("completed_at") or completed_at.isoformat(),
+            "start_ts": final_state.get(f"__stage_starts.{node_name}", start_ts),
+            "end_ts": final_state.get(f"__stage_ends.{node_name}", end_ts),
+        }
+        emit(
+            "analyst_complete",
+            summary=stage_result.get("summary"),
+            duration_ms=int(elapsed * 1000),
+            total_tokens=((analysis_report.get("__stage_usage", {}) or {}).get(stage_id, {}) or {}).get("total_tokens"),
+            data=stage_result,
+        )
+        emit("stage_end", data=stage_result)
+        collector.flush_to_redis()
+        result_queue.put({"ok": True, "result": result_payload})
+    except TaskCancelledError as exc:
+        emit("analyst_error", error=str(exc), status=TaskStatus.CANCELLED.value)
+        result_queue.put({"ok": False, "stage_id": stage_id, "cancelled": True, "error": str(exc)})
+    except Exception as exc:
+        logger.error("Top-level analyst subprocess %s failed for task %s: %s", stage_id, task_id, exc, exc_info=True)
+        emit("analyst_error", error=str(exc), status=TaskStatus.FAILED.value)
+        result_queue.put({"ok": False, "stage_id": stage_id, "cancelled": False, "error": str(exc)})
+    finally:
+        expire_streams(child_client, stream_key)
+        try:
+            child_client.close()
+        except Exception:
+            pass
+
+
+def run_top_level_analysts(
+    task_id: str,
+    request: AnalysisRequest,
+    task_state: Dict[str, Any],
+    start_time: datetime,
+) -> Dict[str, Any]:
+    payload = json.dumps(model_dump_compat(request), default=str)
+    result_queue = multiprocessing.Queue()
+    processes: Dict[str, multiprocessing.Process] = {}
+    completed_stage_ids = set()
+    partial_state = Propagator().create_initial_state(request.ticker, request.date)
+
+    try:
+        for stage_id in TOP_LEVEL_ANALYST_STAGE_IDS:
+            proc = multiprocessing.Process(
+                target=_run_single_analyst_subprocess,
+                args=(stage_id, payload, result_queue),
+                name=f"analyst-{stage_id}-{task_id}",
+                daemon=True,
+            )
+            proc.start()
+            processes[stage_id] = proc
+
+        while len(completed_stage_ids) < len(TOP_LEVEL_ANALYST_STAGE_IDS):
+            latest_state = load_task_state(task_id)
+            if latest_state and latest_state.get("status") == TaskStatus.CANCELLED.value:
+                raise TaskCancelledError("analysis cancelled by user")
+
+            try:
+                item = result_queue.get(timeout=0.25)
+            except queue.Empty:
+                item = None
+
+            if item:
+                stage_id = item.get("stage_id") or item.get("result", {}).get("stage_id")
+                if not item.get("ok"):
+                    raise TaskCancelledError(item["error"]) if item.get("cancelled") else RuntimeError(item["error"])
+                result = item["result"]
+                merge_stage_result_into_state(partial_state, result)
+                completed_stage_ids.add(stage_id)
+                update_processing_checkpoint(
+                    task_state,
+                    partial_state,
+                    start_time,
+                    request.execution_mode.value,
+                    str(request.llm_config.provider if request.llm_config else "unknown"),
+                )
+
+            for stage_id, proc in processes.items():
+                if stage_id in completed_stage_ids:
+                    continue
+                if proc.is_alive():
+                    continue
+                if proc.exitcode not in (0, None):
+                    raise RuntimeError(f"top-level analyst subprocess {stage_id} exited with code {proc.exitcode}")
+
+        return partial_state
+    finally:
+        for proc in processes.values():
+            if proc.is_alive():
+                proc.terminate()
+                proc.join(timeout=1)
+                if proc.is_alive():
+                    proc.kill()
+                    proc.join(timeout=1)
+        try:
+            result_queue.cancel_join_thread()
+        except Exception:
+            pass
+        try:
+            result_queue.close()
+        except Exception:
+            pass
+        try:
+            result_queue.join_thread()
+        except Exception:
+            pass
 
 
 def run_analysis(task_id: str, request: AnalysisRequest) -> None:
@@ -1061,6 +1402,7 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
                 snapshot,
                 start_time,
                 request.execution_mode.value,
+                str(config.get("llm_provider", "unknown")),
                 collector,
             ),
         )
@@ -1078,6 +1420,7 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
             processing_time,
             task_status=TaskStatus.COMPLETED.value,
             execution_mode=request.execution_mode.value,
+            provider=str(config.get("llm_provider", "unknown")),
             usage_collector=collector,
         )
 
@@ -1147,6 +1490,7 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
     )
     stream_key = f"{STREAM_KEY_PREFIX}:{task_id}"
     client = get_redis_client()
+    collector = None
 
     if task_state.get("status") == TaskStatus.CANCELLED.value:
         logger.info("Skipping cancelled streaming task %s before start", task_id)
@@ -1162,13 +1506,29 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
 
     async def token_cb(stage_id: str, node: str, token: str) -> None:
         try:
-            client.xadd(
+            append_stream_event(
+                client,
                 stream_key,
-                {"type": "token", "stage_id": stage_id, "node": node, "t": token},
-                maxlen=200_000,
+                {"type": "token", "stage_id": stage_id, "node": node, "t": token, "text": token, "ts": utcnow_iso()},
             )
         except Exception as exc:
             logger.warning("xadd token failed: %s", exc)
+
+    async def graph_event_cb(event: Dict[str, Any]) -> None:
+        try:
+            append_stream_event(
+                client,
+                stream_key,
+                {
+                    "type": event.get("type", "analyst_status"),
+                    "stage_id": event.get("stage_id"),
+                    "node": event.get("node"),
+                    "tool": event.get("tool"),
+                    "ts": utcnow_iso(),
+                },
+            )
+        except Exception as exc:
+            logger.warning("graph_event_cb failed: %s", exc)
 
     async def stage_end_cb(stage_id: str, state_snapshot: Dict[str, Any]) -> None:
         try:
@@ -1177,14 +1537,21 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
             if latest and latest.get("status") == TaskStatus.CANCELLED.value:
                 raise TaskCancelledError("analysis cancelled by user")
 
-            update_processing_checkpoint(task_state, state_snapshot, start_time, request.execution_mode.value, collector)
+            update_processing_checkpoint(
+                task_state,
+                state_snapshot,
+                start_time,
+                request.execution_mode.value,
+                str(config.get("llm_provider", "unknown")),
+                collector,
+            )
             # find the stage data we just updated
             stage_rows = task_state.get("stages", [])
             stage_data = next((s for s in stage_rows if s.get("stage_id") == stage_id), {})
-            client.xadd(
+            append_stream_event(
+                client,
                 stream_key,
-                {"type": "stage_end", "stage_id": stage_id, "data": json.dumps(stage_data, default=str)},
-                maxlen=200_000,
+                {"type": "stage_end", "stage_id": stage_id, "data": stage_data, "ts": utcnow_iso()},
             )
         except TaskCancelledError:
             raise
@@ -1205,12 +1572,27 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
             redis_client=client,
         )
 
-        trading_graph = TradingAgentsGraph(debug=False, config=config, usage_collector=collector)
-        final_state = await trading_graph.propagate_streaming(
-            request.ticker,
-            request.date,
+        top_level_state = await asyncio.to_thread(
+            run_top_level_analysts,
+            task_id,
+            request,
+            task_state,
+            start_time,
+        )
+        downstream_config = deepcopy(config)
+        downstream_config["allow_empty_analysts"] = True
+
+        trading_graph = TradingAgentsGraph(
+            selected_analysts=[],
+            debug=False,
+            config=downstream_config,
+            usage_collector=collector,
+        )
+        final_state = await trading_graph.propagate_from_state_streaming(
+            top_level_state,
             token_callback=token_cb,
             stage_end_callback=stage_end_cb,
+            event_callback=graph_event_cb,
         )
 
         # check cancellation one last time
@@ -1228,6 +1610,7 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
             processing_time,
             task_status=TaskStatus.COMPLETED.value,
             execution_mode=request.execution_mode.value,
+            provider=str(config.get("llm_provider", "unknown")),
             usage_collector=collector,
         )
 
@@ -1244,7 +1627,7 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
         })
         save_task_state(task_state)
 
-        client.xadd(stream_key, {"type": "task_complete", "status": "completed"})
+        append_stream_event(client, stream_key, {"type": "task_complete", "status": "completed", "ts": utcnow_iso()})
         logger.info("Streaming analysis completed for task %s in %.2fs", task_id, processing_time)
 
         try:
@@ -1269,7 +1652,7 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
         except Exception:
             pass
         try:
-            client.xadd(stream_key, {"type": "task_error", "error": str(exc)})
+            append_stream_event(client, stream_key, {"type": "task_error", "error": str(exc), "status": TaskStatus.CANCELLED.value, "ts": utcnow_iso()})
         except Exception:
             pass
 
@@ -1289,20 +1672,25 @@ async def _run_streaming_analysis_async(task_id: str, request: AnalysisRequest) 
         except Exception:
             pass
         try:
-            client.xadd(stream_key, {"type": "task_error", "error": str(exc)})
+            append_stream_event(client, stream_key, {"type": "task_error", "error": str(exc), "status": TaskStatus.FAILED.value, "ts": utcnow_iso()})
         except Exception:
             pass
 
     finally:
-        try:
-            client.expire(stream_key, STREAM_TTL_SECONDS)
-        except Exception:
-            pass
+        expire_streams(client, stream_key, *(analyst_stream_key(task_id, stage_id) for stage_id in TOP_LEVEL_ANALYST_STAGE_IDS))
 
 
 def run_streaming_analysis(task_id: str, request: AnalysisRequest) -> None:
     """Synchronous wrapper for the streaming analysis — called from the worker thread."""
     asyncio.run(_run_streaming_analysis_async(task_id, request))
+
+
+def _run_analysis_payload_subprocess(payload: str) -> None:
+    request_payload = json.loads(payload)
+    request = AnalysisRequest(**request_payload)
+    if not request.task_id:
+        raise ValueError("queued request is missing task_id")
+    run_streaming_analysis(request.task_id, request)
 
 
 def process_analysis_payload(payload: str) -> None:
@@ -1316,7 +1704,54 @@ def process_analysis_payload(payload: str) -> None:
         logger.info("Skipping queued payload for cancelled task %s", request.task_id)
         return
 
-    run_streaming_analysis(request.task_id, request)
+    process = multiprocessing.Process(
+        target=_run_analysis_payload_subprocess,
+        args=(payload,),
+        name=f"analysis-{request.task_id}",
+    )
+    process.start()
+
+    cancellation_requested = False
+    while process.is_alive():
+        process.join(timeout=0.5)
+        latest_state = load_task_state(request.task_id)
+        if latest_state and latest_state.get("status") == TaskStatus.CANCELLED.value:
+            cancellation_requested = True
+            logger.info("Terminating analysis subprocess for cancelled task %s", request.task_id)
+            process.terminate()
+            process.join(timeout=5)
+            if process.is_alive():
+                logger.warning("Killing stubborn analysis subprocess for task %s", request.task_id)
+                process.kill()
+                process.join(timeout=1)
+            break
+
+    if cancellation_requested:
+        return
+
+    exit_code = process.exitcode
+    if exit_code not in (0, None):
+        latest_state = load_task_state(request.task_id)
+        if latest_state and latest_state.get("status") == TaskStatus.CANCELLED.value:
+            return
+        task_state = latest_state or create_task_state(
+            request.task_id,
+            request.ticker,
+            request.market,
+            request.date,
+            request.execution_mode,
+        )
+        task_state.update(
+            {
+                "status": TaskStatus.FAILED.value,
+                "market": request.market.value,
+                "execution_mode": request.execution_mode.value,
+                "error": f"analysis subprocess exited with code {exit_code}",
+                "completed_at": utcnow_iso(),
+            }
+        )
+        save_task_state(task_state)
+        raise RuntimeError(f"analysis subprocess exited with code {exit_code}")
 
 
 def recover_processing_queue() -> None:
@@ -1576,6 +2011,10 @@ async def get_analysis_result(task_id: str) -> AnalysisResponse:
 async def stream_analysis_events(task_id: str, request: Request):  # type: ignore[override]
     """SSE endpoint that streams token events and stage completions for a task."""
     stream_key = f"{STREAM_KEY_PREFIX}:{task_id}"
+    analyst_streams = {
+        analyst_stream_key(task_id, stage_id): "0"
+        for stage_id in TOP_LEVEL_ANALYST_STAGE_IDS
+    }
     loop = asyncio.get_event_loop()
     client = get_redis_client()
 
@@ -1586,19 +2025,18 @@ async def stream_analysis_events(task_id: str, request: Request):  # type: ignor
             return
 
         # Always start from the beginning of the stream so nothing is missed
-        last_id = "0"
+        last_ids = {stream_key: "0", **analyst_streams}
 
         while True:
             if await request.is_disconnected():
                 break
-
-            current_last_id = last_id  # capture for thread-safe lambda
+            current_last_ids = dict(last_ids)
 
             try:
                 results = await loop.run_in_executor(
                     None,
-                    lambda lid=current_last_id: client.xread(
-                        {stream_key: lid}, count=200, block=500
+                    lambda lids=current_last_ids: client.xread(
+                        lids, count=200, block=500
                     ),
                 )
             except Exception as exc:
@@ -1607,9 +2045,10 @@ async def stream_analysis_events(task_id: str, request: Request):  # type: ignor
                 continue
 
             if results:
-                for _, entries in results:
+                for key, entries in results:
+                    key_name = key.decode("utf-8") if isinstance(key, bytes) else str(key)
                     for entry_id, fields in entries:
-                        last_id = entry_id
+                        last_ids[key_name] = entry_id
                         yield {"data": json.dumps(fields)}
                         if fields.get("type") in ("task_complete", "task_error"):
                             return

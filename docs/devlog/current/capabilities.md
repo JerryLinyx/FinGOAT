@@ -28,14 +28,18 @@
   - Python worker 消费任务并持续写 checkpoint
   - cancel / resume
   - `stages` 作为主展示契约
+  - 顶层四个 analyst 以独立子进程执行，并通过 Redis Streams + SSE 实时上报事件
+  - provider usage 已统一走 shared normalization，`ollama` token 重新进入 stage 统计链
 - `partial`
-  - Go/Python 结果结构仍有动态 JSON 区域
+  - Go/Python 结果结构仍有动态 JSON 区域，但 selected stages 已开始收敛到 `StageRequest / StageResult / ExecutionBackend`
   - runtime 修复仍偏请求驱动
+  - 只有顶层四个 analyst 已进程化；debate stages 仍在单 graph run 内
 - `gaps`
   - 更系统的后台 sweeper / reconciliation
   - 更强的 typed contract 和错误模型
+  - debate multi-agent protocol 仍未 backend 化
 - `source ADRs`
-  - `ADR-001`, `ADR-012`, `ADR-013`, `ADR-014`, `ADR-017`, `ADR-018`, `ADR-021`, `ADR-026`
+  - `ADR-001`, `ADR-012`, `ADR-013`, `ADR-014`, `ADR-017`, `ADR-018`, `ADR-021`, `ADR-026`, `ADR-042`, `ADR-044`
 
 ## Market Data
 
@@ -89,14 +93,19 @@
   - OpenClaw gateway
   - `execution_mode=openclaw`
   - per-user analyst registry / stage-run
+  - workflow 专用 agents 已支持 `market / social / news / fundamentals / portfolio_manager / trader_plan / risk_management` 共 `7/9` stages
+  - Dockerized backend / trading-service 已可通过 `host.docker.internal` 连接宿主机 OpenClaw gateway
 - `partial`
   - chat 与 workflow 已相关，但仍有 local-first 历史包袱
+  - 聊天页里 4-agent role match 仍是历史 MVP；workflow 实际使用的是单独的 7-stage workflow agents
+  - stage-level provider/duration 已统一，但 token usage 仍未从 gateway 回传
   - 健康契约和部署路径仍需收敛
 - `gaps`
+  - `research_debate / risk_debate` 的 multi-agent protocol
   - 更稳定的 VM / remote deployment 形态
   - 更完整的 usage / token visibility
 - `source ADRs`
-  - `ADR-010`, `ADR-023`, `ADR-026`
+  - `ADR-010`, `ADR-023`, `ADR-026`, `ADR-044`
 
 ## Deployment / Infra
 

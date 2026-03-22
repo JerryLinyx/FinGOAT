@@ -1,28 +1,24 @@
 import time
-import json
 
 
-def create_risk_manager(llm, memory, usage_collector=None):
-    def risk_manager_node(state) -> dict:
+def build_risk_management_prompt(state, memory) -> str:
+    company_name = state["company_of_interest"]
 
-        company_name = state["company_of_interest"]
+    history = state["risk_debate_state"]["history"]
+    market_research_report = state["market_report"]
+    news_report = state["news_report"]
+    fundamentals_report = state["fundamentals_report"]
+    sentiment_report = state["sentiment_report"]
+    trader_plan = state["investment_plan"]
 
-        history = state["risk_debate_state"]["history"]
-        risk_debate_state = state["risk_debate_state"]
-        market_research_report = state["market_report"]
-        news_report = state["news_report"]
-        fundamentals_report = state["news_report"]
-        sentiment_report = state["sentiment_report"]
-        trader_plan = state["investment_plan"]
+    curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
+    past_memories = memory.get_memories(curr_situation, n_matches=2)
 
-        curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
-        past_memories = memory.get_memories(curr_situation, n_matches=2)
+    past_memory_str = ""
+    for i, rec in enumerate(past_memories, 1):
+        past_memory_str += rec["recommendation"] + "\n\n"
 
-        past_memory_str = ""
-        for i, rec in enumerate(past_memories, 1):
-            past_memory_str += rec["recommendation"] + "\n\n"
-
-        prompt = f"""As the Risk Management Judge and Debate Facilitator, your goal is to evaluate the debate between three risk analysts—Risky, Neutral, and Safe/Conservative—and determine the best course of action for the trader. Your decision must result in a clear recommendation: Buy, Sell, or Hold. Choose Hold only if strongly justified by specific arguments, not as a fallback when all sides seem valid. Strive for clarity and decisiveness.
+    return f"""As the Risk Management Judge and Debate Facilitator, your goal is to evaluate the debate between three risk analysts—Risky, Neutral, and Safe/Conservative—and determine the best course of action for the trader. Your decision must result in a clear recommendation: Buy, Sell, or Hold. Choose Hold only if strongly justified by specific arguments, not as a fallback when all sides seem valid. Strive for clarity and decisiveness.
 
 Guidelines for Decision-Making:
 1. **Summarize Key Arguments**: Extract the strongest points from each analyst, focusing on relevance to the context.
@@ -36,6 +32,8 @@ Deliverables:
 
 ---
 
+**Company:** {company_name}
+
 **Analysts Debate History:**  
 {history}
 
@@ -43,27 +41,37 @@ Deliverables:
 
 Focus on actionable insights and continuous improvement. Build on past lessons, critically evaluate all perspectives, and ensure each decision advances better outcomes."""
 
-        _start = time.time()
-        response = llm.invoke(prompt)
-        if usage_collector:
-            usage_collector.record_llm_call("Risk Judge", response, _start)
 
-        new_risk_debate_state = {
-            "judge_decision": response.content,
-            "history": risk_debate_state["history"],
-            "risky_history": risk_debate_state["risky_history"],
-            "safe_history": risk_debate_state["safe_history"],
-            "neutral_history": risk_debate_state["neutral_history"],
-            "latest_speaker": "Judge",
-            "current_risky_response": risk_debate_state["current_risky_response"],
-            "current_safe_response": risk_debate_state["current_safe_response"],
-            "current_neutral_response": risk_debate_state["current_neutral_response"],
-            "count": risk_debate_state["count"],
-        }
+def run_risk_management_stage(state, llm, memory, usage_collector=None):
+    risk_debate_state = state["risk_debate_state"]
+    prompt = build_risk_management_prompt(state, memory)
 
-        return {
-            "risk_debate_state": new_risk_debate_state,
-            "final_trade_decision": response.content,
-        }
+    _start = time.time()
+    response = llm.invoke(prompt)
+    if usage_collector:
+        usage_collector.record_llm_call("Risk Judge", response, _start)
+
+    new_risk_debate_state = {
+        "judge_decision": response.content,
+        "history": risk_debate_state["history"],
+        "risky_history": risk_debate_state["risky_history"],
+        "safe_history": risk_debate_state["safe_history"],
+        "neutral_history": risk_debate_state["neutral_history"],
+        "latest_speaker": "Judge",
+        "current_risky_response": risk_debate_state["current_risky_response"],
+        "current_safe_response": risk_debate_state["current_safe_response"],
+        "current_neutral_response": risk_debate_state["current_neutral_response"],
+        "count": risk_debate_state["count"],
+    }
+
+    return {
+        "risk_debate_state": new_risk_debate_state,
+        "final_trade_decision": response.content,
+    }
+
+
+def create_risk_manager(llm, memory, usage_collector=None):
+    def risk_manager_node(state) -> dict:
+        return run_risk_management_stage(state, llm, memory, usage_collector)
 
     return risk_manager_node

@@ -29,7 +29,7 @@ SPEC.loader.exec_module(MODULE)
 
 class EmbeddingSettingsTest(unittest.TestCase):
     def test_ollama_defaults_to_local_embedding_route(self) -> None:
-        with patch.dict(os.environ, {}, clear=False):
+        with patch.dict(os.environ, {}, clear=False), patch.object(MODULE, "_running_in_docker", return_value=False):
             model, base_url, api_key = MODULE._resolve_embedding_settings(
                 {"llm_provider": "ollama", "backend_url": "http://localhost:11434"}
             )
@@ -47,7 +47,7 @@ class EmbeddingSettingsTest(unittest.TestCase):
                 "EMBED_API_KEY": "local-key",
             },
             clear=False,
-        ):
+        ), patch.object(MODULE, "_running_in_docker", return_value=False):
             model, base_url, api_key = MODULE._resolve_embedding_settings(
                 {"llm_provider": "ollama", "backend_url": "http://localhost:11434"}
             )
@@ -55,6 +55,22 @@ class EmbeddingSettingsTest(unittest.TestCase):
         self.assertEqual(model, "custom-embed")
         self.assertEqual(base_url, "http://ollama-host:11434/v1")
         self.assertEqual(api_key, "local-key")
+
+    def test_ollama_localhost_embed_route_rewrites_inside_docker(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "EMBED_BASE_URL": "http://localhost:11434/v1",
+            },
+            clear=False,
+        ), patch.object(MODULE, "_running_in_docker", return_value=True):
+            model, base_url, api_key = MODULE._resolve_embedding_settings(
+                {"llm_provider": "ollama", "backend_url": "http://localhost:11434"}
+            )
+
+        self.assertEqual(model, "nomic-embed-text")
+        self.assertEqual(base_url, "http://host.docker.internal:11434/v1")
+        self.assertEqual(api_key, "ollama")
 
     def test_dashscope_ignores_generic_embed_overrides(self) -> None:
         with patch.dict(os.environ, {"DASHSCOPE_API_KEY": "dash-key"}, clear=False):

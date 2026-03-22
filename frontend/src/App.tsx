@@ -26,7 +26,7 @@ type Theme = 'light' | 'dark'
 type CollapsiblePanel = 'config'
 type DragPanel = 'config' | null
 type ActiveTab = 'dashboard' | 'feed' | 'chart' | 'openclaw' | 'usage' | 'admin'
-type ExecutionMode = 'api' | 'ollama' | 'openclaw'
+type AnalysisMode = 'standard' | 'openclaw'
 type OpenClawStatus = 'disconnected' | 'connecting' | 'connected'
 type RoleBindings = Record<'market' | 'social' | 'news' | 'fundamentals', string>
 
@@ -145,11 +145,16 @@ const initialForm = {
 }
 
 type AnalysisDraft = {
-  executionMode: ExecutionMode
+  analysisMode: AnalysisMode
   llmProvider: string
   llmModel: string
   llmBaseUrl: string
   riskTolerance: number
+}
+
+const normalizeAnalysisMode = (value: string | undefined | null): AnalysisMode => {
+  if (value === 'openclaw') return 'openclaw'
+  return 'standard'
 }
 
 const normalizeProviderName = (provider: string | undefined | null): string => {
@@ -186,7 +191,7 @@ function App() {
   const [llmProvider, setLlmProvider] = useState('ollama')
   const [llmModel, setLlmModel] = useState('gemma3:1b')
   const [llmBaseUrl, setLlmBaseUrl] = useState('http://localhost:11434')
-  const [executionMode, setExecutionMode] = useState<ExecutionMode>('ollama')
+  const [analysisMode, setAnalysisMode] = useState<AnalysisMode>('standard')
   const [openclawStatus, setOpenclawStatus] = useState<OpenClawStatus>('disconnected')
   const [openclawBindings, setOpenclawBindings] = useState<RoleBindings>(readOpenClawBindings)
   const [riskTolerance, setRiskTolerance] = useState(1)
@@ -226,7 +231,7 @@ function App() {
       const raw = localStorage.getItem(ANALYSIS_DRAFT_KEY)
       if (!raw) return
       const draft = JSON.parse(raw) as Partial<AnalysisDraft>
-      if (draft.executionMode) setExecutionMode(draft.executionMode)
+      setAnalysisMode(normalizeAnalysisMode((draft as { executionMode?: string }).executionMode ?? draft.analysisMode))
       if (draft.llmProvider) setLlmProvider(normalizeProviderName(draft.llmProvider))
       if (draft.llmModel) setLlmModel(draft.llmModel)
       if (typeof draft.llmBaseUrl === 'string') setLlmBaseUrl(draft.llmBaseUrl)
@@ -493,25 +498,13 @@ function App() {
     setLlmBaseUrl(e.target.value)
   }
 
-  const handleExecutionModeChange = (mode: ExecutionMode) => {
-    setExecutionMode(mode)
-    if (mode === 'ollama') {
-      setLlmProvider('ollama')
-      setLlmModel((prev) => (MODEL_PRESETS.ollama.includes(prev) ? prev : 'gemma3:1b'))
-      setLlmBaseUrl('http://localhost:11434')
-    } else if (mode === 'api' && llmProvider === 'ollama') {
-      const firstConfigured = ['openai', 'anthropic', 'google', 'deepseek', 'dashscope']
-        .find(p => configuredProviders.has(p)) ?? 'openai'
-      setLlmProvider(firstConfigured)
-      setLlmModel('')
-      setLlmBaseUrl(BASE_DEFAULTS[firstConfigured] ?? '')
-    }
-    // openclaw: no LLM config changes needed
+  const handleAnalysisModeChange = (mode: AnalysisMode) => {
+    setAnalysisMode(mode)
   }
 
   const saveAnalysisDraft = useCallback(() => {
     const draft: AnalysisDraft = {
-      executionMode,
+      analysisMode,
       llmProvider,
       llmModel,
       llmBaseUrl,
@@ -520,7 +513,7 @@ function App() {
     localStorage.setItem(ANALYSIS_DRAFT_KEY, JSON.stringify(draft))
     setDraftMessage(`Saved ${new Date().toLocaleTimeString()}`)
     window.setTimeout(() => setDraftMessage(''), 2200)
-  }, [executionMode, llmBaseUrl, llmModel, llmProvider, riskTolerance])
+  }, [analysisMode, llmBaseUrl, llmModel, llmProvider, riskTolerance])
 
   const detectOllamaModels = useCallback(async (force = false) => {
     const targetHost = llmBaseUrl.trim() || 'http://localhost:11434'
@@ -533,6 +526,9 @@ function App() {
       const result = await tradingService.getOllamaModels(targetHost)
       setOllamaModels(result.models)
       ollamaLoadedHostRef.current = result.base_url
+      if (result.base_url && result.base_url !== targetHost) {
+        setLlmBaseUrl(result.base_url)
+      }
     } catch (err) {
       setOllamaModels([])
       setOllamaModelsError(err instanceof Error ? err.message : 'Failed to detect Ollama models')
@@ -542,9 +538,9 @@ function App() {
   }, [llmBaseUrl, ollamaModels.length])
 
   useEffect(() => {
-    if (executionMode !== 'ollama') return
+    if (llmProvider !== 'ollama') return
     void detectOllamaModels()
-  }, [detectOllamaModels, executionMode])
+  }, [detectOllamaModels, llmProvider])
 
   const ollamaModelOptions = useMemo(() => {
     const merged = new Set<string>()
@@ -827,45 +823,46 @@ function App() {
           {!isConfigCollapsed && (
           <div className="panel-body scrollable">
 
-            {/* ── Execution Mode segment control ── */}
+            {/* ── Analysis Mode segment control ── */}
             <div className="config-group">
-              <label className="config-label">Execution Mode</label>
+              <label className="config-label">Analysis Mode</label>
               <div className="exec-mode-seg">
-                {(['api', 'ollama', 'openclaw'] as ExecutionMode[]).map((m) => (
+                {(['standard', 'openclaw'] as AnalysisMode[]).map((m) => (
                   <button
                     key={m}
                     type="button"
-                    className={`exec-mode-seg__btn ${executionMode === m ? 'exec-mode-seg__btn--active' : ''}`}
-                    onClick={() => handleExecutionModeChange(m)}
+                    className={`exec-mode-seg__btn ${analysisMode === m ? 'exec-mode-seg__btn--active' : ''}`}
+                    onClick={() => handleAnalysisModeChange(m)}
                   >
-                    {m === 'api' ? 'API' : m === 'ollama' ? 'Ollama' : 'OpenClaw'}
+                    {m === 'standard' ? 'Standard' : 'OpenClaw'}
                   </button>
                 ))}
               </div>
             </div>
 
-            {/* ── API mode: cloud provider config ── */}
-            {executionMode === 'api' && (
-              <>
-                <div className="config-group">
-                  <label className="config-label" htmlFor="ai-model">
-                    LLM Provider
-                  </label>
-                  <select id="ai-model" value={llmProvider} onChange={handleLlmProviderChange}>
-                    {([
-                      { value: 'openai', label: 'OpenAI' },
-                      { value: 'anthropic', label: 'Anthropic' },
-                      { value: 'google', label: 'Gemini' },
-                      { value: 'deepseek', label: 'DeepSeek' },
-                      { value: 'dashscope', label: 'DashScope' },
-                    ] as const).map(({ value, label }) => (
-                      <option key={value} value={value} disabled={!configuredProviders.has(value)}>
-                        {label}{!configuredProviders.has(value) ? ' (no key)' : ''}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            {/* ── Model provider config ── */}
+            <div className="config-group">
+              <label className="config-label" htmlFor="ai-model">
+                Model Provider
+              </label>
+              <select id="ai-model" value={llmProvider} onChange={handleLlmProviderChange}>
+                {([
+                  { value: 'openai', label: 'OpenAI', enabled: configuredProviders.has('openai') },
+                  { value: 'anthropic', label: 'Anthropic', enabled: configuredProviders.has('anthropic') },
+                  { value: 'google', label: 'Gemini', enabled: configuredProviders.has('google') },
+                  { value: 'deepseek', label: 'DeepSeek', enabled: configuredProviders.has('deepseek') },
+                  { value: 'dashscope', label: 'DashScope', enabled: configuredProviders.has('dashscope') },
+                  { value: 'ollama', label: 'Ollama (Local)', enabled: true },
+                ] as const).map(({ value, label, enabled }) => (
+                  <option key={value} value={value} disabled={!enabled}>
+                    {label}{!enabled ? ' (no key)' : ''}
+                  </option>
+                ))}
+              </select>
+            </div>
 
+            {llmProvider !== 'ollama' && (
+              <>
                 <div className="config-group">
                   <label className="config-label" htmlFor="llm-model">
                     LLM Model
@@ -897,8 +894,8 @@ function App() {
               </>
             )}
 
-            {/* ── Ollama mode: local model config ── */}
-            {executionMode === 'ollama' && (
+            {/* ── Ollama local model config ── */}
+            {llmProvider === 'ollama' && (
               <>
                 <div className="config-group">
                   <label className="config-label" htmlFor="ollama-model">
@@ -966,7 +963,7 @@ function App() {
             )}
 
             {/* ── OpenClaw mode: gateway status + role bindings ── */}
-            {executionMode === 'openclaw' && (
+            {analysisMode === 'openclaw' && (
               <div className="config-group">
                 <div className="oc-status-row">
                   <span className={`oc-status-dot oc-status-dot--${openclawStatus}`} />
@@ -1026,11 +1023,9 @@ function App() {
             </div>
 
             <div className="config-note">
-              {executionMode === 'openclaw'
-                ? <>OpenClaw mode · <strong>{Object.values(openclawBindings).filter(Boolean).length}/4</strong> roles bound · <strong>{riskTone}</strong> risk</>
-                : executionMode === 'ollama'
-                  ? <>Ollama · <strong>{llmModel}</strong> · <strong>{riskTone}</strong> risk</>
-                  : <>API · <strong>{llmProvider}</strong> / <strong>{llmModel}</strong> · <strong>{riskTone}</strong> risk</>
+              {analysisMode === 'openclaw'
+                ? <>OpenClaw · <strong>{llmProvider}</strong> / <strong>{llmModel}</strong> · <strong>{Object.values(openclawBindings).filter(Boolean).length}/4</strong> roles bound · <strong>{riskTone}</strong> risk</>
+                : <>Standard · <strong>{llmProvider}</strong> / <strong>{llmModel}</strong> · <strong>{riskTone}</strong> risk</>
               }
             </div>
 
@@ -1080,7 +1075,7 @@ function App() {
               llmProvider={llmProvider}
               llmModel={llmModel}
               llmBaseUrl={llmBaseUrl}
-              executionMode={executionMode === 'openclaw' ? 'openclaw' : 'default'}
+              executionMode={analysisMode === 'openclaw' ? 'openclaw' : 'default'}
               configuredProviders={configuredProviders}
             />
           </div>

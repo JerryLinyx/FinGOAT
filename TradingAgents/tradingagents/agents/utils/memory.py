@@ -1,6 +1,7 @@
 import chromadb
 import logging
 import os
+from urllib.parse import urlparse, urlunparse
 from chromadb.config import Settings
 from openai import OpenAI
 
@@ -31,6 +32,27 @@ def _ollama_embed_base_url(base_url: str | None) -> str:
     return f"{normalized}/v1"
 
 
+def _running_in_docker() -> bool:
+    return os.path.exists("/.dockerenv")
+
+
+def _normalize_ollama_embed_url(base_url: str | None) -> str:
+    normalized = _ollama_embed_base_url(base_url)
+    if not _running_in_docker():
+        return normalized
+    parsed = urlparse(normalized)
+    if parsed.hostname not in {"localhost", "127.0.0.1"}:
+        return normalized
+    host = parsed.netloc
+    port = f":{parsed.port}" if parsed.port else ""
+    if "@" in host:
+        userinfo = host.split("@", 1)[0] + "@"
+    else:
+        userinfo = ""
+    rewritten = parsed._replace(netloc=f"{userinfo}host.docker.internal{port}")
+    return urlunparse(rewritten)
+
+
 def _resolve_embedding_settings(config):
     provider = normalize_provider_name((config or {}).get("llm_provider", os.getenv("LLM_PROVIDER", "openai")))
     provider_base_url = (config or {}).get("backend_url") or os.getenv("LLM_BASE_URL")
@@ -50,7 +72,7 @@ def _resolve_embedding_settings(config):
     if provider == "ollama":
         return (
             embed_model or os.getenv("OLLAMA_EMBED_MODEL", "") or "nomic-embed-text",
-            embed_base_url or _ollama_embed_base_url(provider_base_url),
+            _normalize_ollama_embed_url(embed_base_url or provider_base_url),
             embed_api_key or provider_api_key or os.getenv("OLLAMA_API_KEY", "") or "ollama",
         )
 

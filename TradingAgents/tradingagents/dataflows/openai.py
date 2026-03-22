@@ -4,8 +4,8 @@ from .config import get_config
 
 
 def get_stock_news_openai(query, start_date, end_date):
-    # Always hit OpenAI endpoint with OpenAI key (not the LLM provider base_url)
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY", "")
+    # Always hit OpenAI endpoint with an explicit OpenAI key.
+    api_key = os.getenv("OPENAI_API_KEY", "")
     # Use a dedicated OpenAI tool model; avoid picking deepseek/other providers from config
     model = os.getenv("OPENAI_TOOL_MODEL", "gpt-4o-mini")
     client = OpenAI(base_url="https://api.openai.com/v1", api_key=api_key)
@@ -42,7 +42,7 @@ def get_stock_news_openai(query, start_date, end_date):
 
 
 def get_global_news_openai(curr_date, look_back_days=7, limit=5):
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY", "")
+    api_key = os.getenv("OPENAI_API_KEY", "")
     model = os.getenv("OPENAI_TOOL_MODEL", "gpt-4o-mini")
     client = OpenAI(base_url="https://api.openai.com/v1", api_key=api_key)
 
@@ -78,7 +78,7 @@ def get_global_news_openai(curr_date, look_back_days=7, limit=5):
 
 
 def get_fundamentals_openai(ticker, curr_date):
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("LLM_API_KEY", "")
+    api_key = os.getenv("OPENAI_API_KEY", "")
     model = os.getenv("OPENAI_TOOL_MODEL", "gpt-4o-mini")
     client = OpenAI(base_url="https://api.openai.com/v1", api_key=api_key)
 
