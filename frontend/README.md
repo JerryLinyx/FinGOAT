@@ -5,9 +5,11 @@ React + TypeScript + Vite frontend for FinGOAT.
 ## What this app does
 
 - User register/login (JWT token persisted in browser storage)
-- Market/news article feed UI
+- Market/news feed UI
 - Trading analysis request form (ticker + date + model/provider settings)
 - Polling task status and rendering multi-agent decision/report
+- Advanced analysis configuration for analyst selection and research depth
+- Export completed analysis as JSON or Markdown
 
 ## Main files
 
@@ -56,11 +58,16 @@ The frontend expects the following backend routes:
 
 - `POST /api/auth/login`
 - `POST /api/auth/register`
-- `GET /api/articles`
-- `GET /api/articles/:id/like`
-- `POST /api/articles/:id/like`
+- `GET /api/feed`
+- `GET /api/feed/sources`
+- `GET /api/feed/preferences`
+- `PUT /api/feed/preferences`
+- `POST /api/feed/items/:id/like`
+- `POST /api/feed/items/:id/save`
 - `POST /api/trading/analyze`
 - `GET /api/trading/analysis/:task_id`
+- `GET /api/trading/analysis/:task_id/export.json`
+- `GET /api/trading/analysis/:task_id/export.md`
 - `GET /api/trading/analyses`
 - `GET /api/trading/stats`
 - `GET /api/trading/health`

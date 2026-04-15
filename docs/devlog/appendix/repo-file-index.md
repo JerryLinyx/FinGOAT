@@ -1,6 +1,6 @@
 ---
 title: Repo File Index
-last_verified: 2026-03-19
+last_verified: 2026-03-27
 verified_against: v0.2.0-dev
 ---
 
@@ -38,21 +38,10 @@ verified_against: v0.2.0-dev
 - `TradingAgents/.python-version`: Python 版本约束
 - `TradingAgents/LICENSE`: 开源许可证
 - `TradingAgents/README.md`: TradingAgents 子项目说明
-- `TradingAgents/main.py`: TradingAgents 本地 demo 入口
 - `TradingAgents/pyproject.toml`: Python 包现代构建元数据
 - `TradingAgents/requirements.txt`: 传统 requirements 依赖清单
-- `TradingAgents/setup.py`: 兼容性安装入口
-- `TradingAgents/test.py`: 简单测试/手工入口
+- `TradingAgents/setup.py`: 兼容性安装入口（无 CLI entry）
 - `TradingAgents/uv.lock`: Python 依赖锁文件
-
-### CLI
-
-- `TradingAgents/cli/__init__.py`: CLI 包初始化
-- `TradingAgents/cli/main.py`: 终端交互式 CLI 主入口
-- `TradingAgents/cli/models.py`: CLI 使用的数据模型/枚举
-- `TradingAgents/cli/static/welcome.txt`: CLI 欢迎文案
-- `TradingAgents/cli/utils.py`: CLI 交互工具与 provider/model 选项
-- `TradingAgents/assets/cli/*.png`: CLI 文档截图
 
 ### Tests
 
@@ -128,7 +117,7 @@ verified_against: v0.2.0-dev
 
 ### Assets / Samples
 
-- `TradingAgents/assets/*.png`: 子项目 README/CLI/agent 说明图
+- `TradingAgents/assets/*.png`: 子项目 README / agent 说明图
 - `TradingAgents/assets/wechat.png`: 微信相关展示图
 
 ## Go Backend
@@ -155,19 +144,16 @@ verified_against: v0.2.0-dev
 
 ### Controllers
 
-- `backend/controllers/article_controller.go`: RSS/article 列表、刷新、详情
-- `backend/controllers/article_controller_test.go`: article controller 测试
 - `backend/controllers/auth_controller.go`: register/login/email verification/resend
 - `backend/controllers/auth_controller_test.go`: auth controller 测试
-- `backend/controllers/chart.go`: chart / quote / terminal 路由代理与行情逻辑
+- `backend/controllers/chart.go`: chart / quote / terminal 路由代理
 - `backend/controllers/chart_test.go`: chart controller 测试
 - `backend/controllers/exchange_rate_controller.go`: 汇率接口
 - `backend/controllers/feed_controller.go`: feed board、偏好、like/save、源列表
 - `backend/controllers/feed_controller_test.go`: feed controller 测试
 - `backend/controllers/health_controller.go`: health 接口
-- `backend/controllers/like_controller.go`: article 点赞控制器
 - `backend/controllers/ollama_controller.go`: Ollama `/api/tags` 代理与模型探测
-- `backend/controllers/trading_controller.go`: trading API 主入口、任务创建、provider key 注入
+- `backend/controllers/trading_controller.go`: trading API 主入口、任务创建/导出、provider key 注入
 - `backend/controllers/trading_runtime.go`: Redis runtime/queue 协调与结构定义
 - `backend/controllers/trading_runtime_test.go`: trading runtime 辅助逻辑测试
 - `backend/controllers/usage_controller.go`: usage summary / task usage / admin usage
@@ -268,17 +254,13 @@ verified_against: v0.2.0-dev
 - `services/trading-service/trading_service.py`: FastAPI worker / runtime / streaming / stage assembly 主实现
 - `services/python-common/usage_collector.py`: usage event 采集与 Redis flush
 
-### Example Apps / Historical Experiments
+### Historical Notes
 
-- `langchain-v1/app-langagents-fs.py`: 旧实验入口（文件系统方向）
-- `langchain-v1/app-langagents.py`: 旧实验入口（langagents）
-- `langchain-v1/app-langchain.py`: 旧实验入口（langchain）
-- `langchain-v1/app-langgraph.py`: 旧实验入口（langgraph）
+- `docs/devlog/appendix/api-contracts.md`: Go / Python 共享分析契约说明
 
 ### Tests
 
 - `services/trading-service/test_analysis_report_serialization.py`: analysis_report 序列化测试
-- `services/trading-service/test_trading_service.py`: trading_service 手工/集成测试辅助
 - `services/trading-service/tests/__init__.py`: tests 包初始化
 - `services/trading-service/tests/mock_pipeline/README.md`: mock pipeline 测试说明
 - `services/trading-service/tests/mock_pipeline/__init__.py`: mock pipeline 包初始化
@@ -287,10 +269,6 @@ verified_against: v0.2.0-dev
 - `services/trading-service/tests/mock_pipeline/test_mock_analysis_pipeline.py`: mock 分析流水测试
 - `services/trading-service/tests/mock_pipeline/test_openclaw_stage_contract.py`: OpenClaw stage contract 测试
 - `services/trading-service/tests/mock_pipeline/test_redis_worker_client.py`: Redis worker client 测试
-
-### Sample Outputs
-
-- `langchain-v1/eval_results/*/*.json`: 历史分析状态日志样例，用于回放与对比，不参与主运行逻辑
 
 ## Devlog / Architecture Docs
 

@@ -7,7 +7,7 @@ import {
   useRef,
   useState,
 } from 'react'
-import type { ChangeEvent, FormEvent } from 'react'
+import type { ChangeEvent, Dispatch, FormEvent, SetStateAction } from 'react'
 import './App.css'
 import { TradingAnalysis } from './components/TradingAnalysis'
 import { ChartPage } from './components/ChartPage'
@@ -17,7 +17,7 @@ import { ProfilePage } from './components/ProfilePage'
 import { UsagePage } from './components/UsagePage'
 import { AdminDashboard } from './components/AdminDashboard'
 import { getProfile, getAPIKeys, resendVerification } from './services/userService'
-import { tradingService, type OllamaModel } from './services/tradingService'
+import { tradingService, type AnalystType, type OllamaModel } from './services/tradingService'
 import type { UserProfile } from './types/user'
 
 type AuthMode = 'login' | 'register'
@@ -36,6 +36,7 @@ const REQUIRED_ROLES = [
   { id: 'news' as const, label: 'News Analyst' },
   { id: 'fundamentals' as const, label: 'Fundamentals Analyst' },
 ] as const
+const DEFAULT_SELECTED_ANALYSTS: AnalystType[] = REQUIRED_ROLES.map((role) => role.id)
 
 const OPENCLAW_BINDINGS_KEY = 'fingoat_openclaw_bindings'
 const ANALYSIS_DRAFT_KEY = 'fingoat_analysis_draft'
@@ -150,6 +151,9 @@ type AnalysisDraft = {
   llmModel: string
   llmBaseUrl: string
   riskTolerance: number
+  selectedAnalysts: AnalystType[]
+  maxDebateRounds: number
+  maxRiskDiscussRounds: number
 }
 
 const normalizeAnalysisMode = (value: string | undefined | null): AnalysisMode => {
@@ -195,6 +199,10 @@ function App() {
   const [openclawStatus, setOpenclawStatus] = useState<OpenClawStatus>('disconnected')
   const [openclawBindings, setOpenclawBindings] = useState<RoleBindings>(readOpenClawBindings)
   const [riskTolerance, setRiskTolerance] = useState(1)
+  const [selectedAnalysts, setSelectedAnalysts] = useState<AnalystType[]>(DEFAULT_SELECTED_ANALYSTS)
+  const [maxDebateRounds, setMaxDebateRounds] = useState(1)
+  const [maxRiskDiscussRounds, setMaxRiskDiscussRounds] = useState(1)
+  const [showAdvancedConfig, setShowAdvancedConfig] = useState(false)
   const [draftMessage, setDraftMessage] = useState('')
   const [configuredProviders, setConfiguredProviders] = useState<Set<string>>(new Set())
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
@@ -236,6 +244,18 @@ function App() {
       if (draft.llmModel) setLlmModel(draft.llmModel)
       if (typeof draft.llmBaseUrl === 'string') setLlmBaseUrl(draft.llmBaseUrl)
       if (typeof draft.riskTolerance === 'number') setRiskTolerance(draft.riskTolerance)
+      if (Array.isArray(draft.selectedAnalysts) && draft.selectedAnalysts.length > 0) {
+        const filtered = draft.selectedAnalysts.filter((item): item is AnalystType =>
+          DEFAULT_SELECTED_ANALYSTS.includes(item as AnalystType),
+        )
+        if (filtered.length > 0) setSelectedAnalysts(filtered)
+      }
+      if (typeof draft.maxDebateRounds === 'number' && draft.maxDebateRounds >= 1 && draft.maxDebateRounds <= 5) {
+        setMaxDebateRounds(draft.maxDebateRounds)
+      }
+      if (typeof draft.maxRiskDiscussRounds === 'number' && draft.maxRiskDiscussRounds >= 1 && draft.maxRiskDiscussRounds <= 5) {
+        setMaxRiskDiscussRounds(draft.maxRiskDiscussRounds)
+      }
     } catch {
       // ignore malformed drafts
     }
@@ -502,6 +522,27 @@ function App() {
     setAnalysisMode(mode)
   }
 
+  const toggleSelectedAnalyst = (analyst: AnalystType) => {
+    setSelectedAnalysts((previous) => {
+      if (previous.includes(analyst)) {
+        if (previous.length === 1) {
+          return previous
+        }
+        return previous.filter((item) => item !== analyst)
+      }
+      return [...previous, analyst]
+    })
+  }
+
+  const handleDepthChange = (
+    setter: Dispatch<SetStateAction<number>>,
+    value: string,
+  ) => {
+    const parsed = Number(value)
+    if (Number.isNaN(parsed)) return
+    setter(Math.min(5, Math.max(1, parsed)))
+  }
+
   const saveAnalysisDraft = useCallback(() => {
     const draft: AnalysisDraft = {
       analysisMode,
@@ -509,11 +550,14 @@ function App() {
       llmModel,
       llmBaseUrl,
       riskTolerance,
+      selectedAnalysts,
+      maxDebateRounds,
+      maxRiskDiscussRounds,
     }
     localStorage.setItem(ANALYSIS_DRAFT_KEY, JSON.stringify(draft))
     setDraftMessage(`Saved ${new Date().toLocaleTimeString()}`)
     window.setTimeout(() => setDraftMessage(''), 2200)
-  }, [analysisMode, llmBaseUrl, llmModel, llmProvider, riskTolerance])
+  }, [analysisMode, llmBaseUrl, llmModel, llmProvider, maxDebateRounds, maxRiskDiscussRounds, riskTolerance, selectedAnalysts])
 
   const detectOllamaModels = useCallback(async (force = false) => {
     const targetHost = llmBaseUrl.trim() || 'http://localhost:11434'
@@ -1029,6 +1073,75 @@ function App() {
               }
             </div>
 
+            <div className="config-group">
+              <button
+                type="button"
+                className="action-btn outline"
+                onClick={() => setShowAdvancedConfig((value) => !value)}
+              >
+                {showAdvancedConfig ? 'Hide Advanced Config' : 'Show Advanced Config'}
+              </button>
+            </div>
+
+            {showAdvancedConfig && (
+              <>
+                <div className="config-group">
+                  <div className="config-label-row">
+                    <span>Selected Analysts</span>
+                    <span className="config-value">{selectedAnalysts.length}/4 active</span>
+                  </div>
+                  <div className="config-list">
+                    {REQUIRED_ROLES.map(({ id, label }) => {
+                      const active = selectedAnalysts.includes(id)
+                      return (
+                        <button
+                          key={id}
+                          type="button"
+                          className={`config-row ${active ? 'active' : ''}`}
+                          onClick={() => toggleSelectedAnalyst(id)}
+                        >
+                          <span>{label}</span>
+                          <span className={`check-pill ${active ? 'active' : ''}`} />
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="config-group">
+                  <label className="config-label" htmlFor="max-debate-rounds">
+                    Max Debate Rounds
+                  </label>
+                  <input
+                    id="max-debate-rounds"
+                    type="number"
+                    min="1"
+                    max="5"
+                    value={maxDebateRounds}
+                    onChange={(event) => handleDepthChange(setMaxDebateRounds, event.target.value)}
+                  />
+                </div>
+
+                <div className="config-group">
+                  <label className="config-label" htmlFor="max-risk-discuss-rounds">
+                    Max Risk Discuss Rounds
+                  </label>
+                  <input
+                    id="max-risk-discuss-rounds"
+                    type="number"
+                    min="1"
+                    max="5"
+                    value={maxRiskDiscussRounds}
+                    onChange={(event) => handleDepthChange(setMaxRiskDiscussRounds, event.target.value)}
+                  />
+                </div>
+
+                <div className="config-note config-note--tight">
+                  CLI 的 agent 状态追踪已由前端 SSE、`stages[]`、`AnalystLiveGrid` 和 `AgentDashboard` 覆盖。增加 debate/risk 轮数会显著提升 token 消耗与等待时间，建议仅在需要更深研究时调高。
+                </div>
+              </>
+            )}
+
             <div className="config-actions">
               <button type="button" className="action-btn outline" onClick={saveAnalysisDraft}>
                 Save Draft
@@ -1077,6 +1190,9 @@ function App() {
               llmBaseUrl={llmBaseUrl}
               executionMode={analysisMode === 'openclaw' ? 'openclaw' : 'default'}
               configuredProviders={configuredProviders}
+              selectedAnalysts={selectedAnalysts}
+              maxDebateRounds={maxDebateRounds}
+              maxRiskDiscussRounds={maxRiskDiscussRounds}
             />
           </div>
         </section>

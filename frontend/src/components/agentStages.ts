@@ -50,7 +50,7 @@ export const AGENT_STAGES: AgentStage[] = [
   { key: 'risk_management',   label: 'Risk Management',   icon: '🛡️' },
 ]
 
-// ── Team definitions (mirrors CLI's MessageBuffer.agent_status teams) ────────
+// ── Team definitions used by the web dashboard's live stage grouping ─────────
 
 export interface AgentTeam {
   name: string

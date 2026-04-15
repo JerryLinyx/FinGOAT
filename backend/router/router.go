@@ -62,14 +62,6 @@ func InitRouter() *gin.Engine {
 	{
 		api.POST("/exchangeRates", controllers.CreateExchangeRate)
 
-		api.GET("/articles", controllers.GetArticles)
-		api.GET("/articles/refresh", controllers.RefreshRSSArticles)
-		api.GET("/articles/:id", controllers.GetArticlesByID)
-		api.POST("/articles", controllers.CreateArticle)
-
-		api.POST("/articles/:id/like", controllers.LikeArticle)
-		api.GET("/articles/:id/like", controllers.GetArticleLikes)
-
 		feed := api.Group("/feed")
 		{
 			feed.GET("", controllers.GetFeed)
@@ -97,6 +89,8 @@ func InitRouter() *gin.Engine {
 			trading.POST("/analyze", controllers.RequestAnalysis)
 			trading.GET("/analysis/:task_id", controllers.GetAnalysisResult)
 			trading.GET("/analysis/:task_id/stream", controllers.StreamAnalysisResult)
+			trading.GET("/analysis/:task_id/export.json", controllers.ExportAnalysisJSON)
+			trading.GET("/analysis/:task_id/export.md", controllers.ExportAnalysisMarkdown)
 			trading.POST("/analysis/:task_id/cancel", controllers.CancelAnalysis)
 			trading.POST("/analysis/:task_id/resume", controllers.ResumeAnalysis)
 			trading.GET("/analyses", controllers.ListUserAnalyses)

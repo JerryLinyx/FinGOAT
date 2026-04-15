@@ -1,17 +1,21 @@
 package controllers
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"strings"
+	"text/template"
 	"time"
 
 	"github.com/JerryLinyx/FinGOAT/global"
 	"github.com/JerryLinyx/FinGOAT/models"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const defaultTradingServiceURL = "http://localhost:8001"
@@ -124,6 +128,12 @@ func RequestAnalysis(c *gin.Context) {
 
 	req.Market = normalizeMarket(req.Market)
 	req.Ticker = normalizeTickerForMarket(req.Ticker, req.Market)
+	selectedAnalysts, err := normalizeSelectedAnalysts(req.SelectedAnalysts)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	req.SelectedAnalysts = selectedAnalysts
 
 	// Validate fields (aligned with Python Pydantic constraints)
 	if validationErr := validateAnalysisRequest(&req); validationErr != "" {
@@ -275,6 +285,341 @@ func GetAnalysisResult(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, buildAnalysisTaskResponse(&task, runtime))
+}
+
+type AnalysisExportStage struct {
+	StageID          string  `json:"stage_id"`
+	Label            string  `json:"label"`
+	Status           string  `json:"status"`
+	Backend          string  `json:"backend"`
+	Provider         string  `json:"provider,omitempty"`
+	Summary          string  `json:"summary,omitempty"`
+	StartedAt        string  `json:"started_at,omitempty"`
+	CompletedAt      string  `json:"completed_at,omitempty"`
+	DurationSeconds  float64 `json:"duration_seconds,omitempty"`
+	PromptTokens     int     `json:"prompt_tokens,omitempty"`
+	CompletionTokens int     `json:"completion_tokens,omitempty"`
+	TotalTokens      int     `json:"total_tokens,omitempty"`
+	LLMCalls         int     `json:"llm_calls,omitempty"`
+	FailedCalls      int     `json:"failed_calls,omitempty"`
+	LatencyMs        int     `json:"latency_ms,omitempty"`
+	Error            string  `json:"error,omitempty"`
+}
+
+type AnalysisExportPayload struct {
+	TaskID                string                  `json:"task_id"`
+	Ticker                string                  `json:"ticker"`
+	Market                string                  `json:"market"`
+	AnalysisDate          string                  `json:"analysis_date"`
+	Status                string                  `json:"status"`
+	ExecutionMode         string                  `json:"execution_mode"`
+	SelectedAnalysts      []string                `json:"selected_analysts"`
+	CreatedAt             string                  `json:"created_at"`
+	CompletedAt           string                  `json:"completed_at,omitempty"`
+	ProcessingTimeSeconds float64                 `json:"processing_time_seconds,omitempty"`
+	LLMProvider           string                  `json:"llm_provider,omitempty"`
+	LLMModel              string                  `json:"llm_model,omitempty"`
+	LLMBaseURL            string                  `json:"llm_base_url,omitempty"`
+	Decision              *TradingDecisionPayload `json:"decision,omitempty"`
+	FinalDecision         string                  `json:"final_decision,omitempty"`
+	Confidence            float64                 `json:"confidence,omitempty"`
+	Stages                []AnalysisExportStage   `json:"stages"`
+	AnalysisReport        map[string]interface{}  `json:"analysis_report,omitempty"`
+}
+
+var analysisMarkdownTemplate = template.Must(template.New("analysis_markdown").Funcs(template.FuncMap{
+	"join": strings.Join,
+	"json": func(value interface{}) string {
+		body, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			return "{}"
+		}
+		return string(body)
+	},
+	"mul100": func(value float64) float64 {
+		return value * 100
+	},
+	"providerLine": func(payload AnalysisExportPayload) string {
+		parts := make([]string, 0, 3)
+		if payload.LLMProvider != "" {
+			parts = append(parts, payload.LLMProvider)
+		}
+		if payload.LLMModel != "" {
+			parts = append(parts, payload.LLMModel)
+		}
+		if payload.LLMBaseURL != "" {
+			parts = append(parts, payload.LLMBaseURL)
+		}
+		if len(parts) == 0 {
+			return "N/A"
+		}
+		return strings.Join(parts, " / ")
+	},
+}).Parse(`# Trading Analysis Report
+
+- Task ID: {{.TaskID}}
+- Ticker: {{.Ticker}}
+- Market: {{.Market}}
+- Analysis Date: {{.AnalysisDate}}
+- Execution Mode: {{.ExecutionMode}}
+- Selected Analysts: {{join .SelectedAnalysts ", "}}
+- Provider: {{providerLine .}}
+- Created At: {{.CreatedAt}}
+{{- if .CompletedAt }}
+- Completed At: {{.CompletedAt}}
+{{- end }}
+{{- if gt .ProcessingTimeSeconds 0.0 }}
+- Processing Time: {{printf "%.2fs" .ProcessingTimeSeconds}}
+{{- end }}
+
+## Final Decision
+
+{{- if .Decision }}
+- Action: {{.Decision.Action}}
+- Confidence: {{printf "%.2f%%" (mul100 .Decision.Confidence)}}
+{{- if .Decision.PositionSize }}
+- Position Size: {{.Decision.PositionSize}}
+{{- end }}
+{{- else }}
+No final decision is available.
+{{- end }}
+
+## Stages Summary
+
+{{- if .Stages }}
+{{- range .Stages }}
+### {{.Label}} ({{.StageID}})
+
+- Status: {{.Status}}
+{{- if .Provider }}
+- Provider: {{.Provider}}
+{{- end }}
+{{- if .Backend }}
+- Backend: {{.Backend}}
+{{- end }}
+{{- if .Summary }}
+- Summary: {{.Summary}}
+{{- end }}
+{{- if .StartedAt }}
+- Started At: {{.StartedAt}}
+{{- end }}
+{{- if .CompletedAt }}
+- Completed At: {{.CompletedAt}}
+{{- end }}
+{{- if gt .DurationSeconds 0.0 }}
+- Duration: {{printf "%.2fs" .DurationSeconds}}
+{{- end }}
+{{- if gt .TotalTokens 0 }}
+- Tokens: {{.TotalTokens}} total (prompt {{.PromptTokens}}, completion {{.CompletionTokens}})
+{{- end }}
+{{- if gt .LLMCalls 0 }}
+- LLM Calls: {{.LLMCalls}}
+{{- end }}
+{{- if gt .FailedCalls 0 }}
+- Failed Calls: {{.FailedCalls}}
+{{- end }}
+{{- if gt .LatencyMs 0 }}
+- Latency: {{.LatencyMs}} ms
+{{- end }}
+{{- if .Error }}
+- Error: {{.Error}}
+{{- end }}
+
+{{- end }}
+{{- else }}
+No stage summaries are available.
+{{- end }}
+
+## Full Analysis Report
+
+~~~json
+{{json .AnalysisReport}}
+~~~
+`))
+
+func loadOwnedAnalysisTask(c *gin.Context) (*models.TradingAnalysisTask, *RuntimeTaskState, error) {
+	userID, exists := c.Get("user_id")
+	if !exists {
+		return nil, nil, fmt.Errorf("user not authenticated")
+	}
+
+	var task models.TradingAnalysisTask
+	if err := global.DB.Where("task_id = ? AND user_id = ?", c.Param("task_id"), userID).
+		Preload("Decision").
+		First(&task).Error; err != nil {
+		return nil, nil, err
+	}
+
+	var runtime *RuntimeTaskState
+	if task.Status == "pending" || task.Status == "processing" {
+		reconciled, err := reconcileTaskRuntime(c.Request.Context(), &task)
+		if err != nil {
+			return nil, nil, err
+		}
+		runtime = reconciled
+	}
+	if err := EnsureTaskUsageIngested(c.Request.Context(), &task); err != nil {
+		return nil, nil, err
+	}
+
+	return &task, runtime, nil
+}
+
+func sanitizeExportStages(stages []AnalysisTaskStage) []AnalysisExportStage {
+	if len(stages) == 0 {
+		return []AnalysisExportStage{}
+	}
+	sanitized := make([]AnalysisExportStage, 0, len(stages))
+	for _, stage := range stages {
+		sanitized = append(sanitized, AnalysisExportStage{
+			StageID:          stage.StageID,
+			Label:            stage.Label,
+			Status:           stage.Status,
+			Backend:          stage.Backend,
+			Provider:         stage.Provider,
+			Summary:          stage.Summary,
+			StartedAt:        stage.StartedAt,
+			CompletedAt:      stage.CompletedAt,
+			DurationSeconds:  stage.DurationSeconds,
+			PromptTokens:     stage.PromptTokens,
+			CompletionTokens: stage.CompletionTokens,
+			TotalTokens:      stage.TotalTokens,
+			LLMCalls:         stage.LLMCalls,
+			FailedCalls:      stage.FailedCalls,
+			LatencyMs:        stage.LatencyMs,
+			Error:            stage.Error,
+		})
+	}
+	return sanitized
+}
+
+func sanitizeAnalysisReportForExport(report map[string]interface{}) map[string]interface{} {
+	if report == nil {
+		return nil
+	}
+	body, err := json.Marshal(report)
+	if err != nil {
+		return report
+	}
+	var cloned map[string]interface{}
+	if err := json.Unmarshal(body, &cloned); err != nil {
+		return report
+	}
+
+	rawStages, ok := cloned["__stages"].([]interface{})
+	if !ok {
+		return cloned
+	}
+	for _, rawStage := range rawStages {
+		stage, ok := rawStage.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		delete(stage, "raw_output")
+	}
+	return cloned
+}
+
+func buildAnalysisExportPayload(response AnalysisTaskResponse, selectedAnalysts []string) AnalysisExportPayload {
+	payload := AnalysisExportPayload{
+		TaskID:                response.TaskID,
+		Ticker:                response.Ticker,
+		Market:                response.Market,
+		AnalysisDate:          response.AnalysisDate,
+		Status:                response.Status,
+		ExecutionMode:         response.ExecutionMode,
+		SelectedAnalysts:      selectedAnalysts,
+		CreatedAt:             response.CreatedAt,
+		CompletedAt:           response.CompletedAt,
+		ProcessingTimeSeconds: response.ProcessingTimeSeconds,
+		LLMProvider:           response.LLMProvider,
+		LLMModel:              response.LLMModel,
+		LLMBaseURL:            response.LLMBaseURL,
+		Decision:              response.Decision,
+		FinalDecision:         "",
+		Stages:                sanitizeExportStages(response.Stages),
+		AnalysisReport:        sanitizeAnalysisReportForExport(response.AnalysisReport),
+	}
+	if response.Decision != nil {
+		payload.FinalDecision = response.Decision.Action
+		payload.Confidence = response.Decision.Confidence
+	}
+	return payload
+}
+
+func renderMarkdownReport(payload AnalysisExportPayload) (string, error) {
+	var buffer bytes.Buffer
+	if err := analysisMarkdownTemplate.Execute(&buffer, payload); err != nil {
+		return "", err
+	}
+	return buffer.String(), nil
+}
+
+func ExportAnalysisJSON(c *gin.Context) {
+	task, runtime, err := loadOwnedAnalysisTask(c)
+	if err != nil {
+		if strings.Contains(err.Error(), "user not authenticated") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load analysis export: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+
+	response := buildAnalysisTaskResponse(task, runtime)
+	if response.Status != "completed" {
+		c.JSON(http.StatusConflict, gin.H{"error": "analysis export is only available after task completion"})
+		return
+	}
+
+	req, err := unmarshalTaskConfig(task.Config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse stored task config: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, buildAnalysisExportPayload(response, req.SelectedAnalysts))
+}
+
+func ExportAnalysisMarkdown(c *gin.Context) {
+	task, runtime, err := loadOwnedAnalysisTask(c)
+	if err != nil {
+		if strings.Contains(err.Error(), "user not authenticated") {
+			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+			return
+		}
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load analysis export: " + err.Error()})
+			return
+		}
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found"})
+		return
+	}
+
+	response := buildAnalysisTaskResponse(task, runtime)
+	if response.Status != "completed" {
+		c.JSON(http.StatusConflict, gin.H{"error": "analysis export is only available after task completion"})
+		return
+	}
+
+	req, err := unmarshalTaskConfig(task.Config)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to parse stored task config: " + err.Error()})
+		return
+	}
+
+	body, err := renderMarkdownReport(buildAnalysisExportPayload(response, req.SelectedAnalysts))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to render markdown export: " + err.Error()})
+		return
+	}
+
+	c.Header("Content-Type", "text/markdown; charset=utf-8")
+	c.String(http.StatusOK, body)
 }
 
 // StreamAnalysisResult proxies the SSE stream from the Python trading service.

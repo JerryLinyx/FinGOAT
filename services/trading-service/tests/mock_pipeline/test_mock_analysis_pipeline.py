@@ -363,21 +363,17 @@ class MockAnalysisPipelineTest(unittest.TestCase):
         sys.modules.pop("trading_service", None)
 
     def test_async_pipeline_completes_with_mock_graph(self):
-        response = self.client.post(
-            "/api/v1/analyze",
-            json={
-                "ticker": "NVDA",
-                "date": "2024-05-10",
-                "llm_config": {
-                    "provider": "dashscope",
-                    "deep_think_llm": "qwen3.5-flash",
-                    "quick_think_llm": "qwen3.5-flash"
-                }
-            },
+        initial = self.trading_service.enqueue_analysis_request(
+            self.trading_service.AnalysisRequest(
+                ticker="NVDA",
+                date="2024-05-10",
+                llm_config=self.trading_service.LLMConfig(
+                    provider="dashscope",
+                    deep_think_llm="qwen3.5-flash",
+                    quick_think_llm="qwen3.5-flash",
+                ),
+            )
         )
-
-        self.assertEqual(response.status_code, 202)
-        initial = response.json()
         self.assertEqual(initial["status"], "pending")
 
         payload = self.redis.rpoplpush(self.trading_service.QUEUE_KEY, self.trading_service.PROCESSING_QUEUE_KEY)

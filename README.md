@@ -127,9 +127,9 @@ FinGOAT (Financial Graph-Orchestrated Agentic Trading) is a full-stack financial
 - Multi-LLM support (OpenAI/Anthropic/Google/DeepSeek/Aliyun, Ollama/vLLM).
 
 #### Data layer
-- PostgreSQL for tasks/decisions/articles.
-- Redis for cache and future stream/event use.
-- RSS ingestion for news articles.
+- PostgreSQL for tasks/decisions/feed data.
+- Redis for queue/runtime/cache usage.
+- `market-data-service` for chart / quote / terminal vendor access.
 
 ### Deployment
 

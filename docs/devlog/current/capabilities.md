@@ -27,19 +27,40 @@
   - Redis queue + processing + runtime state
   - Python worker 消费任务并持续写 checkpoint
   - cancel / resume
+  - analysis export（`json` / `markdown`）
   - `stages` 作为主展示契约
   - 顶层四个 analyst 以独立子进程执行，并通过 Redis Streams + SSE 实时上报事件
+  - `selected_analysts` 与 research depth 已打通 frontend -> Go -> Python
   - provider usage 已统一走 shared normalization，`ollama` token 重新进入 stage 统计链
 - `partial`
-  - Go/Python 结果结构仍有动态 JSON 区域，但 selected stages 已开始收敛到 `StageRequest / StageResult / ExecutionBackend`
+  - Go/Python 结果结构仍有动态 JSON 区域，但现在已有 `api-contracts.md + check_api_contracts.py` 防漂移
   - runtime 修复仍偏请求驱动
   - 只有顶层四个 analyst 已进程化；debate stages 仍在单 graph run 内
+  - checkpoint 可见，但 required stage 失败时的 fail-closed 完整性契约尚未落地
 - `gaps`
   - 更系统的后台 sweeper / reconciliation
   - 更强的 typed contract 和错误模型
   - debate multi-agent protocol 仍未 backend 化
+  - `failed_recoverable` / `incomplete` 等恢复态与失败 stage 重试 UX
 - `source ADRs`
-  - `ADR-001`, `ADR-012`, `ADR-013`, `ADR-014`, `ADR-017`, `ADR-018`, `ADR-021`, `ADR-026`, `ADR-042`, `ADR-044`
+  - `ADR-001`, `ADR-012`, `ADR-013`, `ADR-014`, `ADR-017`, `ADR-018`, `ADR-021`, `ADR-026`, `ADR-042`, `ADR-044`, `ADR-045`, `ADR-046`
+
+## Memory / Evaluation
+
+- `working`
+  - `TradingDecision.analysis_report` 可持久化完整兼容报告 JSON
+  - pgvector-backed `user_memory_entries` schema 和 `PgVectorMemoryStore` 基础已存在
+  - 现有 agent prompt 已能读取相似 reflection memory（存在数据时）
+- `partial`
+  - pgvector 当前更接近反思型 memory 基础，不等同于完整报告自动向量索引
+  - Signal Ledger / outcome evaluation / reflection loop 尚未形成闭环
+- `gaps`
+  - completed report chunk 向量化与 report memory
+  - time-aware evidence ledger、supersede/contradiction 语义与 repeated-analysis delta
+  - 只允许完整成功任务进入 signal / report memory / reflection memory 的写入门禁
+  - `T+1 / T+5 / T+20` outcome evaluation 与 confidence calibration
+- `source ADRs`
+  - `ADR-030`, `ADR-035`, `ADR-046`, `ADR-047`, `ADR-048`
 
 ## Market Data
 
@@ -60,16 +81,15 @@
 ## Feed
 
 - `working`
-  - DB-first smart refresh
-  - RSS dedupe 与 backfill
-  - `feed_ingest_runs` 审计
   - feed board 基本交互与修复
+  - feed 成为唯一内容域
+  - like/save/source-preference 主路径稳定
 - `partial`
   - freshness 仍部分依赖当前调度策略
 - `gaps`
   - 更系统的调度与缓存治理
 - `source ADRs`
-  - `ADR-016`, `ADR-028`
+  - `ADR-016`, `ADR-028`, `ADR-045`
 
 ## Usage / Admin
 
@@ -113,10 +133,11 @@
   - docker-compose 主开发链路
   - nginx 作为统一入口
   - backend / trading-service / market-data-service / OpenClaw gateway 分层
+  - Go-only public API boundary 与独立 `market-data-service` 已在代码层固定
 - `partial`
   - Go / Python / Docker 配置优先级仍需更明确文档和约束
 - `gaps`
   - 更强的环境分层与密钥治理
   - 生产部署回归清单
 - `source ADRs`
-  - `ADR-021`, `ADR-026`, `ADR-032`, `ADR-033`
+  - `ADR-021`, `ADR-026`, `ADR-032`, `ADR-033`, `ADR-045`

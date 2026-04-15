@@ -41,6 +41,19 @@ Example:
 // See ADR-029.
 ```
 
+## Requirement Maintenance
+
+Use this storage rule for new product or architecture requirements:
+
+- Put durable reasoning in `records/` as an `ADR-XXX` record.
+- Put current-version product intent in `current/prd.md`.
+- Put executable implementation tasks in `current/task-backlog.md`.
+- Put "what works / what is partial / what is missing" truth in `current/capabilities.md`.
+- Put stable implemented structures in `appendix/` only after they are real enough to verify against code.
+- Keep local external-project clones outside devlog, under the Git-ignored `.reference/` directory. Track source/commit/purpose in `.reference/README.local.md`, and only promote an idea into devlog when it becomes a real PRD/backlog/ADR item.
+
+For speculative or newly discussed requirements, create an active `kind: requirement` record first. Implementation plans, commits, and code comments should then cite that stable ADR ID. This keeps design discussion reusable without pretending the feature has already shipped.
+
 ## Current Source Of Truth
 
 - Active current-version product and delivery state: `current/`
@@ -50,5 +63,5 @@ Example:
 
 ## Current baseline
 
-- Archived baseline version: `v0.1.4`
+- Archived baseline version: `v0.1.5`
 - Current planning target: `v0.2.0`

@@ -43,10 +43,6 @@ for path in (str(PYTHON_COMMON_PATH), str(TRADING_AGENTS_PATH)):
         sys.path.insert(0, path)
 
 from json_safety import make_json_safe
-from marketdata.services.candles_service import get_chart_payload
-from marketdata.services.quote_service import get_quote as get_marketdata_quote
-from marketdata.services.snapshot_service import get_terminal_snapshot
-
 from tradingagents.default_config import DEFAULT_CONFIG
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.graph.propagation import Propagator
@@ -124,6 +120,9 @@ class TradingAction(str, Enum):
     HOLD = "HOLD"
 
 
+DEFAULT_SELECTED_ANALYSTS = ("market", "social", "news", "fundamentals")
+
+
 class LLMConfig(BaseModel):
     deep_think_llm: str = Field(default="gemma3:1b", description="Deep thinking LLM model")
     quick_think_llm: str = Field(default="gemma3:1b", description="Quick thinking LLM model")
@@ -157,6 +156,7 @@ class AnalysisRequest(BaseModel):
     market: MarketMode = Field(default=MarketMode.US, description="Target market: US equities or China A-shares")
     date: str = Field(..., description="Analysis date in YYYY-MM-DD format", example="2024-05-10")
     execution_mode: ExecutionMode = Field(default=ExecutionMode.DEFAULT, description="Execution backend mode")
+    selected_analysts: Optional[List[str]] = Field(default=None, description="Subset of top-level analysts to run")
     llm_config: Optional[LLMConfig] = Field(default=None, description="LLM configuration")
     data_vendor_config: Optional[DataVendorConfig] = Field(default=None, description="Data vendor configuration")
     alpha_vantage_api_key: Optional[str] = Field(default=None, description="User's Alpha Vantage API key (injected by Go backend)")
@@ -181,6 +181,29 @@ class AnalysisRequest(BaseModel):
         except ValueError as exc:
             raise ValueError("Date must be in YYYY-MM-DD format") from exc
         return value
+
+    @validator("selected_analysts", pre=True, always=True)
+    def validate_selected_analysts(cls, value: Optional[List[str]]) -> List[str]:
+        if value is None:
+            return list(DEFAULT_SELECTED_ANALYSTS)
+        if len(value) == 0:
+            raise ValueError("selected_analysts must include at least one analyst")
+
+        normalized: List[str] = []
+        seen = set()
+        for item in value:
+            candidate = str(item or "").strip().lower()
+            if not candidate:
+                continue
+            if candidate not in DEFAULT_SELECTED_ANALYSTS:
+                raise ValueError(f"selected_analysts contains unsupported analyst {item!r}")
+            if candidate in seen:
+                continue
+            seen.add(candidate)
+            normalized.append(candidate)
+        if not normalized:
+            raise ValueError("selected_analysts must include at least one analyst")
+        return normalized
 
 
 class BatchAnalysisRequest(BaseModel):
@@ -605,6 +628,7 @@ def build_config(request: AnalysisRequest) -> Dict[str, Any]:
     config["task_id"] = request.task_id
     config["user_id"] = request.user_id
     config["market"] = request.market.value
+    config["selected_analysts"] = list(request.selected_analysts or DEFAULT_SELECTED_ANALYSTS)
     config["openclaw_gateway_url"] = os.getenv("OPENCLAW_GATEWAY_URL", "http://localhost:8011").rstrip("/")
 
     if request.llm_config:
@@ -1288,9 +1312,10 @@ def run_top_level_analysts(
     processes: Dict[str, multiprocessing.Process] = {}
     completed_stage_ids = set()
     partial_state = Propagator().create_initial_state(request.ticker, request.date)
+    selected_stage_ids = list(request.selected_analysts or DEFAULT_SELECTED_ANALYSTS)
 
     try:
-        for stage_id in TOP_LEVEL_ANALYST_STAGE_IDS:
+        for stage_id in selected_stage_ids:
             proc = multiprocessing.Process(
                 target=_run_single_analyst_subprocess,
                 args=(stage_id, payload, result_queue),
@@ -1300,7 +1325,7 @@ def run_top_level_analysts(
             proc.start()
             processes[stage_id] = proc
 
-        while len(completed_stage_ids) < len(TOP_LEVEL_ANALYST_STAGE_IDS):
+        while len(completed_stage_ids) < len(selected_stage_ids):
             latest_state = load_task_state(task_id)
             if latest_state and latest_state.get("status") == TaskStatus.CANCELLED.value:
                 raise TaskCancelledError("analysis cancelled by user")
@@ -1393,7 +1418,12 @@ def run_analysis(task_id: str, request: AnalysisRequest) -> None:
             redis_client=get_redis_client(),
         )
 
-        trading_graph = TradingAgentsGraph(debug=False, config=config, usage_collector=collector)
+        trading_graph = TradingAgentsGraph(
+            selected_analysts=list(request.selected_analysts or DEFAULT_SELECTED_ANALYSTS),
+            debug=False,
+            config=config,
+            usage_collector=collector,
+        )
         state, decision = trading_graph.propagate(
             request.ticker,
             request.date,
@@ -1887,114 +1917,6 @@ async def health_check() -> HealthResponse:
     )
 
 
-@app.get("/api/v1/chart", response_model=ChartResponse)
-async def get_market_chart(
-    ticker: str,
-    range: str = "3m",
-    market: MarketMode = MarketMode.US,
-    alpha_vantage_key: Optional[str] = Header(default=None, alias="X-Alpha-Vantage-Key"),
-) -> ChartResponse:
-    try:
-        payload = get_chart_payload(
-            get_redis_client(),
-            ticker,
-            market.value,
-            range,
-            api_key=alpha_vantage_key,
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to fetch chart data: {exc}") from exc
-
-    if not payload.get("data"):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="no chart data available for the requested ticker")
-
-    return ChartResponse(**payload)
-
-
-@app.get("/api/v1/quote", response_model=QuoteResponse)
-async def get_market_quote(
-    ticker: str,
-    market: MarketMode = MarketMode.US,
-    alpha_vantage_key: Optional[str] = Header(default=None, alias="X-Alpha-Vantage-Key"),
-) -> QuoteResponse:
-    try:
-        payload = get_marketdata_quote(get_redis_client(), ticker, market.value, api_key=alpha_vantage_key)
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except Exception as exc:
-        logger.exception("Failed to fetch quote data for %s (%s)", ticker, market.value)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to fetch quote data: {exc}") from exc
-
-    return QuoteResponse(**payload)
-
-
-@app.get("/api/v1/terminal", response_model=TerminalResponse)
-async def get_market_terminal(
-    ticker: str,
-    period: TerminalPeriod = TerminalPeriod.DAY,
-    market: MarketMode = MarketMode.US,
-    before: Optional[str] = None,
-    alpha_vantage_key: Optional[str] = Header(default=None, alias="X-Alpha-Vantage-Key"),
-) -> TerminalResponse:
-    try:
-        payload = get_terminal_snapshot(
-            get_redis_client(),
-            ticker,
-            market.value,
-            period.value,
-            before=before,
-            api_key=alpha_vantage_key,
-        )
-    except HTTPException:
-        raise
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-    except Exception as exc:
-        if "no chart data available" in str(exc).lower():
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
-        logger.exception("Failed to build terminal data for %s (%s, %s)", ticker, market.value, period.value)
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"failed to build terminal data: {exc}") from exc
-
-    return TerminalResponse(**payload)
-
-
-# --------------------------------------------------------------------------- #
-# DEPRECATED: Direct analysis endpoints.                                       #
-# All analysis requests must go through the Go backend, which enqueues tasks   #
-# via Redis.  These endpoints are retained for local debugging only and will   #
-# be removed in a future release.                                              #
-# --------------------------------------------------------------------------- #
-
-@app.post("/api/v1/analyze", response_model=AnalysisResponse, status_code=status.HTTP_202_ACCEPTED,
-          deprecated=True, tags=["deprecated"])
-async def analyze_stock(request: AnalysisRequest) -> AnalysisResponse:
-    """DEPRECATED — use Go backend POST /api/trading/analyze instead."""
-    ensure_worker_thread_running()
-    task_state = enqueue_analysis_request(request)
-    return AnalysisResponse(**task_state)
-
-
-@app.post("/api/v1/analyze/sync", response_model=AnalysisResponse,
-          deprecated=True, tags=["deprecated"])
-async def analyze_stock_sync(request: AnalysisRequest) -> AnalysisResponse:
-    """DEPRECATED — use Go backend POST /api/trading/analyze instead."""
-    task_id = request.task_id or str(uuid.uuid4())
-    request.task_id = task_id
-
-    task_state = create_task_state(task_id, request.ticker, request.market, request.date)
-    save_task_state(task_state)
-    register_recent_task(task_id)
-
-    # run_analysis internally invokes TradingAgentsGraph.propagate(), which
-    # uses asyncio.run(). Offload it to a worker thread to avoid nesting event
-    # loops inside FastAPI's running loop.
-    await asyncio.to_thread(run_analysis, task_id, request)
-    final_state = load_task_state(task_id)
-    return AnalysisResponse(**final_state)
-
-
 @app.get("/api/v1/analysis/{task_id}", response_model=AnalysisResponse)
 async def get_analysis_result(task_id: str) -> AnalysisResponse:
     task_state = load_task_state(task_id)
@@ -2064,53 +1986,6 @@ async def stream_analysis_events(task_id: str, request: Request):  # type: ignor
                     return
 
     return EventSourceResponse(event_gen())
-
-
-@app.get("/api/v1/tasks", deprecated=True, tags=["deprecated"])
-async def list_tasks(limit: int = 10) -> Dict[str, Any]:
-    """DEPRECATED — use Go backend GET /api/trading/analyses instead."""
-    task_ids = get_redis_client().lrange(RECENT_TASKS_KEY, 0, max(limit, 1)-1)
-    tasks: List[Dict[str, Any]] = []
-    for task_id in task_ids:
-        task_state = load_task_state(task_id)
-        if task_state is not None:
-            tasks.append(task_state)
-
-    return {
-        "tasks": tasks,
-        "total": len(tasks),
-    }
-
-
-@app.delete("/api/v1/analysis/{task_id}", deprecated=True, tags=["deprecated"])
-async def delete_task(task_id: str) -> Dict[str, str]:
-    """DEPRECATED — use Go backend POST /api/trading/analysis/{task_id}/cancel instead."""
-    task_state = load_task_state(task_id)
-    if task_state is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task {task_id} not found",
-        )
-
-    client = get_redis_client()
-    client.delete(runtime_state_key(task_id))
-    client.lrem(RECENT_TASKS_KEY, 0, task_id)
-
-    return {"message": f"Task {task_id} deleted"}
-
-
-@app.get("/api/v1/config", response_model=Dict[str, Any], deprecated=True, tags=["deprecated"])
-async def get_default_config() -> Dict[str, Any]:
-    """DEPRECATED — config is now managed by Go backend per-user profile."""
-    return {
-        "llm_config": {
-            "deep_think_llm": DEFAULT_CONFIG["deep_think_llm"],
-            "quick_think_llm": DEFAULT_CONFIG["quick_think_llm"],
-            "max_debate_rounds": DEFAULT_CONFIG["max_debate_rounds"],
-            "max_risk_discuss_rounds": DEFAULT_CONFIG["max_risk_discuss_rounds"],
-        },
-        "data_vendors": DEFAULT_CONFIG["data_vendors"],
-    }
 
 
 if __name__ == "__main__":

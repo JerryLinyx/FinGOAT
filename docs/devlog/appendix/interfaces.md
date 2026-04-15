@@ -1,6 +1,6 @@
 ---
 title: Interfaces
-last_verified: 2026-03-19
+last_verified: 2026-03-27
 verified_against: v0.2.0-dev
 ---
 
@@ -24,11 +24,16 @@ verified_against: v0.2.0-dev
 - `GET /api/usage/summary`
 - `GET /api/admin/usage/summary`
 - `GET /api/admin/usage/users`
-- `GET /api/articles`
-- `GET /api/articles?refresh=true`（smart refresh）
-- `GET /api/articles/refresh`（force ingest）
+- `GET /api/feed`
+- `GET /api/feed/sources`
+- `GET /api/feed/preferences`
+- `PUT /api/feed/preferences`
+- `POST /api/feed/items/:id/like`
+- `POST /api/feed/items/:id/save`
 - `POST /api/trading/analyze`
 - `GET /api/trading/analysis/:task_id`
+- `GET /api/trading/analysis/:task_id/export.json`
+- `GET /api/trading/analysis/:task_id/export.md`
 - `POST /api/trading/analysis/:task_id/cancel`
 - `POST /api/trading/analysis/:task_id/resume`
 - `GET /api/trading/analyses`
@@ -54,6 +59,7 @@ verified_against: v0.2.0-dev
 - `ticker`
 - `date`
 - `execution_mode`（`default` / `openclaw`）
+- `selected_analysts`
 - `llm_config`
 - `data_vendor_config`（可选）
 
@@ -62,6 +68,7 @@ verified_against: v0.2.0-dev
 - `task_id`
 - `status`
 - `execution_mode`
+- `selected_analysts`（存于任务配置，用于导出和 resume）
 - `stages`（主展示契约）
 - `analysis_report`（兼容保留）
 - `decision`
@@ -119,7 +126,7 @@ verified_against: v0.2.0-dev
 
 ### 当前问题
 
-- 仍暴露 `/api/v1/analyze` 等任务接口，存在边界重叠历史包袱
+- 公共分析入口已删除；保留内部结果/SSE 端点给 Go 聚合
 
 ## 4. Go -> Python / OpenClaw Gateway（健康探针）
 

@@ -4,7 +4,7 @@ This directory contains a no-network regression test for the trading analysis
 pipeline.
 
 What it covers:
-- `POST /api/v1/analyze` creates a queued task
+- `enqueue_analysis_request(...)` creates a queued task
 - the queued payload is processed with a fake `TradingAgentsGraph`
 - task state is persisted and later returned by `GET /api/v1/analysis/{task_id}`
 

@@ -2,12 +2,29 @@
 
 ## P0
 
+- [ ] Define strict analysis completion contracts: required stages must all succeed before a task can emit a final investment recommendation
+  - Record: `ADR-046`
+- [ ] Add recoverable failure states (`failed_recoverable`, `incomplete`, `expired`) and user-facing retry / rerun actions
+  - Record: `ADR-046`
+- [ ] Gate final decision, Signal Ledger, Report Memory, and Reflection Memory writes so incomplete tasks cannot pollute product history
+  - Record: `ADR-046`
+- [ ] Build time-aware `Evidence Ledger` for facts, news, sentiment, filings, and assumptions with observed/event/as-of timestamps and supersede/contradiction semantics
+  - Record: `ADR-047`
+- [ ] Build `Report Memory`: chunk and embed completed analysis reports/stages with task, ticker, date, stage, provider, and schema metadata
+  - Record: `ADR-047`
 - [ ] Build `Signal Ledger`: persist every final BUY/SELL/HOLD as a first-class signal and evaluate realized performance over `T+1 / T+5 / T+20`
   - Record: `ADR-035`
+  - Record: `ADR-048`
 - [ ] Add signal scorecard views (win rate, average return, confidence calibration, market split, model/provider split)
   - Record: `ADR-035`
+  - Record: `ADR-048`
 - [ ] Add agent attribution: record per-agent stance and connect it to eventual signal outcomes and token cost
   - Record: `ADR-035`
+  - Record: `ADR-048`
+- [ ] Add post-outcome reflection jobs that write validated lessons to reflection memory only after evaluation horizons mature
+  - Record: `ADR-048`
+- [ ] Add repeated-analysis delta view showing new, superseded, or contradicted evidence since the last analysis of the same ticker
+  - Record: `ADR-047`
 - [ ] Add smart routing / triage so low-value or low-data analyses do not always pay full multi-agent cost
   - Record: `ADR-035`
 - [x] Redesign user table for v0.2 account evolution (`email` uniqueness, password hash semantics, profile fields, migration compatibility)
@@ -31,9 +48,18 @@
 - [x] Consolidate service API ownership: Go is the only external trading API, Python trading service is internal worker-only
   - Record: `ADR-021`
   - Record: `ADR-026` (CORS dynamic, port convergence, nginx route removal)
-- [x] Restrict or deprecate Python public task endpoints (`/api/v1/analyze`, `/api/v1/analysis/{task_id}`) from production exposure
+- [x] Remove Python public task creation endpoints; keep only internal result/SSE endpoints for Go aggregation
   - Record: `ADR-021`
-  - Record: `ADR-026` (all endpoints marked deprecated=True)
+  - Record: `ADR-026`
+  - Record: `ADR-045` (deprecated endpoints fully removed)
+- [x] Remove the legacy `articles` system and keep `feed` as the only content domain
+  - Record: `ADR-045`
+- [x] Remove legacy `langchain-v1` experiments from the main repository
+  - Record: `ADR-045`
+- [x] Retire TradingAgents CLI after exposing analyst selection, research depth, and export via Web/API
+  - Record: `ADR-045`
+- [x] Add lightweight shared-contract documentation and drift checks for Go/Python analysis payloads
+  - Record: `ADR-045`
 - [x] Redesign analysis task state lifecycle
   - Record: `ADR-018`
 - [x] Define PostgreSQL and Redis boundary for task execution
@@ -154,7 +180,7 @@
 - [x] Replace pill-button splitter with 6px border drag strip
 - [x] Halve panel gaps in resizable layout (0.9rem -> 0.45rem)
 - [x] Add chart query history (localStorage + chips)
-- [x] Refactor frontend state boundaries for auth, article feed, and analysis
+- [x] Refactor frontend state boundaries for auth, feed, and analysis
 - [x] Resolve OpenClaw runtime health/dependency contract so local available setups no longer report misleading degraded status
   - Record: `ADR-010`
 - [x] Add a background scheduler for feed ingest (cron/worker) so feed freshness does not depend on manual refresh
@@ -173,6 +199,10 @@
   - Record: `ADR-044`
 - [x] Add a mixed analysis view with a top-level live analyst grid while preserving the existing bottom stage/final results panel
   - Record: `ADR-042`
+- [x] Add advanced analysis configuration for `selected_analysts`, `max_debate_rounds`, and `max_risk_discuss_rounds`
+  - Record: `ADR-045`
+- [x] Add task export endpoints and frontend download actions for `json` / `markdown`
+  - Record: `ADR-045`
 - [x] Fix the deprecated sync analysis debug endpoint so real provider validation can run without nested event-loop failure
   - Record: `ADR-032`
 - [x] Verify `DashScope / qwen3.5-plus` real analysis runs populate live stage token and latency counters
@@ -185,18 +215,18 @@
 
 ## P2
 
+- [ ] Review `.reference/ai-hedge-fund` for agentic hedge-fund workflow, portfolio/risk decision patterns, and ideas that can improve FinGOAT without copying implementation directly
+- [ ] Review `.reference/hermes-agent` for agent runtime architecture, tool orchestration, memory/context handling, and prompt workflow patterns
+- [ ] Review `.reference/awesome-design-md` for frontend style references, design-system ideas, component density, and markdown-driven design guidance
+- [ ] Create a reference-adoption review template covering license, architecture fit, implementation boundary, and FinGOAT backlog mapping
 - [ ] Evaluate selective adoption of fundamentals RAG
   - Related branch review: `ADR-003`
 - [ ] Evaluate selective adoption of valuation analyst and structured analyst outputs
-- [x] Add RSS article refresh deduplication and batch backfill for unseen feed items
-  - Record: `ADR-016`
 - [x] Switch stock chart fetching to Alpha Vantage free-tier-compatible endpoints
   - Record: `ADR-016`
 - [x] Redesign chart controls so bar interval and lookback window are not conflated
   - Record: `ADR-016`
 - [x] Rework feed refresh into a smart DB-first refresh that only ingests RSS when the last successful sync is stale
-  - Record: `ADR-016`
-- [x] Track article ingest runs so feed refresh decisions and failures are auditable
   - Record: `ADR-016`
 - [x] Normalize article payload fields in the feed UI so title/source/date render correctly after moving articles into Feed
   - Record: `ADR-016`

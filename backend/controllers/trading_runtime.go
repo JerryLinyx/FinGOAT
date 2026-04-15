@@ -29,6 +29,16 @@ var (
 	datePattern = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
 )
 
+var (
+	defaultSelectedAnalysts = []string{"market", "social", "news", "fundamentals"}
+	allowedAnalysts         = map[string]struct{}{
+		"market":       {},
+		"social":       {},
+		"news":         {},
+		"fundamentals": {},
+	}
+)
+
 // validateAnalysisRequest returns a human-readable error message for the first
 // validation failure, or "" if the request is valid.
 func validateAnalysisRequest(req *AnalysisRequest) string {
@@ -62,6 +72,9 @@ func validateAnalysisRequest(req *AnalysisRequest) string {
 		if r := req.LLMConfig.MaxRiskDiscussRounds; r != 0 && (r < 1 || r > 5) {
 			return "max_risk_discuss_rounds must be between 1 and 5"
 		}
+	}
+	if req.SelectedAnalysts != nil && len(req.SelectedAnalysts) == 0 {
+		return "selected_analysts must include at least one analyst"
 	}
 
 	return ""
@@ -103,6 +116,7 @@ type AnalysisRequest struct {
 	Market             string            `json:"market,omitempty"`
 	Date               string            `json:"date" binding:"required"`
 	ExecutionMode      string            `json:"execution_mode,omitempty"`
+	SelectedAnalysts   []string          `json:"selected_analysts,omitempty"`
 	LLMConfig          *LLMConfig        `json:"llm_config,omitempty"`
 	DataVendorConfig   *DataVendorConfig `json:"data_vendor_config,omitempty"`
 	AlphaVantageAPIKey string            `json:"alpha_vantage_api_key,omitempty"`
@@ -222,6 +236,36 @@ func defaultDataVendorConfigForMarket(market string) *DataVendorConfig {
 			NewsData:            "alpha_vantage",
 		}
 	}
+}
+
+func normalizeSelectedAnalysts(raw []string) ([]string, error) {
+	if raw == nil {
+		return append([]string(nil), defaultSelectedAnalysts...), nil
+	}
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("selected_analysts must include at least one analyst")
+	}
+
+	normalized := make([]string, 0, len(raw))
+	seen := make(map[string]struct{}, len(raw))
+	for _, item := range raw {
+		value := strings.ToLower(strings.TrimSpace(item))
+		if value == "" {
+			continue
+		}
+		if _, ok := allowedAnalysts[value]; !ok {
+			return nil, fmt.Errorf("selected_analysts contains unsupported analyst %q", item)
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		normalized = append(normalized, value)
+	}
+	if len(normalized) == 0 {
+		return nil, fmt.Errorf("selected_analysts must include at least one analyst")
+	}
+	return normalized, nil
 }
 
 func generateTaskID() (string, error) {
@@ -394,11 +438,13 @@ func marshalTaskConfig(request *AnalysisRequest) (*string, error) {
 	config := struct {
 		Market           string            `json:"market,omitempty"`
 		ExecutionMode    string            `json:"execution_mode,omitempty"`
+		SelectedAnalysts []string          `json:"selected_analysts,omitempty"`
 		LLMConfig        *LLMConfig        `json:"llm_config,omitempty"`
 		DataVendorConfig *DataVendorConfig `json:"data_vendor_config,omitempty"`
 	}{
 		Market:           normalizeMarket(request.Market),
 		ExecutionMode:    normalizeExecutionMode(request.ExecutionMode),
+		SelectedAnalysts: request.SelectedAnalysts,
 		LLMConfig:        sanitizedLLMConfig,
 		DataVendorConfig: request.DataVendorConfig,
 	}
@@ -795,5 +841,10 @@ func unmarshalTaskConfig(raw *string) (*AnalysisRequest, error) {
 	req.Market = normalizeMarket(req.Market)
 	req.Ticker = normalizeTickerForMarket(req.Ticker, req.Market)
 	req.ExecutionMode = normalizeExecutionMode(req.ExecutionMode)
+	selectedAnalysts, err := normalizeSelectedAnalysts(req.SelectedAnalysts)
+	if err != nil {
+		return nil, err
+	}
+	req.SelectedAnalysts = selectedAnalysts
 	return &req, nil
 }

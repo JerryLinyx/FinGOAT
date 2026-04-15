@@ -44,6 +44,7 @@ Commit messages should reference the stable ADR ID when implementation work land
 | [ADR-041](./ADR-041_2026-03-21-hard-cancel-running-analysis.md) | 2026-03-21 | decision | 2026-03-21 Hard Cancel for Running Analysis | active |
 | [ADR-042](./ADR-042_2026-03-21-top-level-analyst-subprocess-streaming.md) | 2026-03-21 | decision | 2026-03-21 Top-Level Analyst Subprocess Streaming | active |
 | [ADR-044](./ADR-044_2026-03-22-runtime-unification-and-openclaw-7-of-9.md) | 2026-03-22 | decision | 2026-03-22 Runtime Unification And OpenClaw 7-of-9 Rollout | active |
+| [ADR-045](./ADR-045_2026-03-27-repo-slimming-and-boundary-convergence.md) | 2026-03-27 | decision | 2026-03-27 Repo Slimming And Boundary Convergence | active |
 
 ## Requirements
 
@@ -53,6 +54,9 @@ Commit messages should reference the stable ADR ID when implementation work land
 | [ADR-019](./ADR-019_2026-03-13-trading-analysis-duplicate-guard-requirements.md) | 2026-03-13 | requirement | v0.2.0 Trading Analysis Duplicate Guard Requirements | superseded |
 | [ADR-020](./ADR-020_2026-03-13-user-account-and-byok-requirements.md) | 2026-03-13 | requirement | v0.2.0 User Account And BYOK Requirements | superseded |
 | [ADR-021](./ADR-021_2026-03-13-v020-kickoff-requirements.md) | 2026-03-13 | requirement | v0.2.0 Kickoff Requirements | active |
+| [ADR-046](./ADR-046_2026-04-15-strict-analysis-completion-and-recovery.md) | 2026-04-15 | requirement | Strict Analysis Completion And Recovery | active |
+| [ADR-047](./ADR-047_2026-04-15-evidence-and-report-memory.md) | 2026-04-15 | requirement | Evidence And Report Memory | active |
+| [ADR-048](./ADR-048_2026-04-15-signal-ledger-and-reflection-loop.md) | 2026-04-15 | requirement | Signal Ledger And Reflection Loop | active |
 
 ## Reviews
 

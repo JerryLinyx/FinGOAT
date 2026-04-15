@@ -1,6 +1,6 @@
 ---
 title: Data Models
-last_verified: 2026-03-19
+last_verified: 2026-03-27
 verified_against: v0.2.0-dev
 ---
 
@@ -34,20 +34,12 @@ verified_against: v0.2.0-dev
 - 生命周期：短中期
 - 用途：email verification 流程
 
-### Article
+### FeedSource / FeedItem / UserFeedPreference
 
-- 来源：RSS ingest + 手工创建接口
-- 关键字段：`title/content/preview/source/source_url/link/guid/published_at`
-- 存储：PostgreSQL（主）+ Redis（列表缓存）
-- 生命周期：长期（缓存短周期）
-
-### FeedIngestRun
-
-- 来源：每次 RSS ingest（manual / refresh）
-- 关键字段：`trigger/status/started_at/finished_at/new_count/warning_count/error`
-- 存储：PostgreSQL
-- 生命周期：长期审计与决策数据
-- 用途：支撑 DB-first smart refresh 策略
+- 来源：feed ingest、用户偏好与 like/save 行为
+- 关键字段：`name/base_url/source_type/fetch_mode/priority`、`title/excerpt/canonical_url/published_at`、`topics/tickers/sources`
+- 存储：PostgreSQL（主）+ Redis（缓存）
+- 生命周期：长期
 
 ### TradingAnalysisTask
 
@@ -158,19 +150,17 @@ verified_against: v0.2.0-dev
 4. Go：查询时对账 runtime 与 DB，终态回写决策。
 5. Frontend：轮询读取 `stages/analysis_report/decision`。
 
-### 文章链路（DB-first）
+### Feed 链路
 
-1. 正常读取：直接 DB 读取，返回文章列表（可缓存）。
-2. `refresh=true`：先看最近成功 ingest，若过旧再触发 ingest。
-3. `/api/articles/refresh`：强制 ingest。
-4. ingest 全过程写 `FeedIngestRun` 审计记录。
+1. 后台周期性 ingest feed source。
+2. Go backend 读取 `FeedItem` 并按偏好、热度、新鲜度排序。
+3. 用户在前端进行 like/save/source-preference 操作。
 
 ## 5. 当前数据问题与瓶颈
 
 - `analysis_report` 仍是半结构化兼容层，需要继续收紧。
 - Go/Python 跨服务 schema 仍有动态区域。
 - vendor 数据缺少统一 runtime 缓存与去重策略。
-- feed 仍缺后台定时 ingest（目前以 smart refresh + manual 为主）。
 - 用户域仍处于兼容迁移期，身份与配置相关模型需要继续治理。
 
 ## 6. 未来需要统一或重构的数据结构
@@ -179,5 +169,4 @@ verified_against: v0.2.0-dev
 - `analysis_report` 的兼容退场路径
 - Go/Python 契约强类型化
 - vendor 缓存 key + TTL + 去重策略
-- feed 定时任务与 ingest run 生命周期策略
 - 用户 API key 审计字段与更多 provider 元数据

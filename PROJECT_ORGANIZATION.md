@@ -6,9 +6,9 @@ This document is a practical map of the current repository structure and runtime
 
 FinGOAT is a multi-service, multi-agent trading system:
 
-- `frontend` (React/Vite): user UI, login, article feeds, trading analysis panel
-- `backend` (Go/Gin): auth, data APIs, task persistence, gateway to Python service
-- `services/trading-service` (FastAPI): async analysis task API, wraps TradingAgents graph
+- `frontend` (React/Vite): user UI, login, feed, chart, trading analysis panel
+- `backend` (Go/Gin): auth, data APIs, task persistence, single product API boundary
+- `services/trading-service` (FastAPI): Redis-backed execution runtime and SSE/result endpoints
 - `services/market-data-service` (FastAPI): chart / quote / terminal internal service
 - `services/python-common`: shared Python runtime modules
 - `TradingAgents` (Python package): core multi-agent reasoning and graph logic
@@ -30,24 +30,18 @@ FinGOAT is a multi-service, multi-agent trading system:
 
 - `main.go`: init config, migrate DB, start Gin server
 - `router/router.go`: route and auth middleware registration
-- `controllers/trading_controller.go`: forward analysis requests to FastAPI, persist task+decision
+- `controllers/trading_controller.go`: create/export analysis tasks, persist task+decision, proxy health
 - `models/trading_analysis.go`: `trading_analysis_tasks` and `trading_decisions` schema
 - `config/`: Viper config, DB and Redis initialization
 
 ### Python services (`services/`)
 
-- `trading-service/trading_service.py`: FastAPI endpoints, background execution, task state
+- `trading-service/trading_service.py`: FastAPI runtime, queue worker, SSE/result endpoints, task state
 - `trading-service/README.md`: service-level API and operational notes
-- `trading-service/test_trading_service.py`: service tests (local)
 - `market-data-service/market_data_service.py`: chart / quote / terminal API
 - `python-common/marketdata/`: shared marketdata package
 - `python-common/json_safety.py`: JSON serialization helper
 - `python-common/usage_collector.py`: usage event collector
-
-### Legacy playground (`langchain-v1/`)
-
-- `app-langagents*` / `app-langgraph.py`: historical experiments
-- `eval_results/`: sample output logs retained for comparison
 
 ### Agent core (`TradingAgents/`)
 
@@ -55,6 +49,7 @@ FinGOAT is a multi-service, multi-agent trading system:
 - `tradingagents/agents/`: analyst/researcher/risk/trader roles
 - `tradingagents/dataflows/`: market/news/fundamental provider adapters
 - `default_config.py`: baseline LLM/data vendor config
+- CLI 已移除；Web app 通过 SSE + stages 取代原终端状态追踪
 
 ### Frontend (`frontend/`)
 
@@ -67,11 +62,11 @@ FinGOAT is a multi-service, multi-agent trading system:
 
 1. User submits ticker/date in `frontend`.
 2. Frontend calls `POST /api/trading/analyze` on Go backend.
-3. Go backend forwards to `POST /api/v1/analyze` (FastAPI) and stores task metadata.
-4. FastAPI runs `TradingAgentsGraph.propagate()` in background.
-5. Frontend polls `GET /api/trading/analysis/{task_id}`.
-6. Go backend fetches latest FastAPI status, writes final decision/report to PostgreSQL.
-7. Frontend renders action/confidence/report JSON.
+3. Go backend stores task metadata, writes Redis runtime seed, and enqueues the request.
+4. `trading-service` consumes the Redis queue and runs `TradingAgentsGraph`.
+5. Frontend polls `GET /api/trading/analysis/{task_id}` and/or opens SSE stream.
+6. Go backend reconciles runtime state, writes final decision/report to PostgreSQL, and serves exports.
+7. Frontend renders action/confidence/stages/report JSON.
 
 ## 4) Ports and runtime services
 
@@ -98,10 +93,7 @@ FinGOAT is a multi-service, multi-agent trading system:
 
 ### P1 (medium impact)
 
-- Frontend docs were scaffold template (now replaced in `frontend/README.md`).
-- Evaluate whether `langchain-v1/eval_results/` should remain tracked:
-  - if for demos, move to `assets/examples/`
-  - if generated outputs, ignore future artifacts
+- Frontend docs should stay aligned with feed/export/advanced-config behavior.
 
 - Config consistency check:
   - `backend/config/config.yaml` defines timezone/sslmode
@@ -118,4 +110,4 @@ FinGOAT is a multi-service, multi-agent trading system:
 1. Fix auth header contract mismatch.
 2. Persist FastAPI task status in Redis.
 3. Normalize config source-of-truth (remove hardcoded DB options).
-4. Consolidate docs into `docs/`.
+4. Keep docs aligned with Go-only product API boundary.

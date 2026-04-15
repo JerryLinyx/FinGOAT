@@ -4,6 +4,7 @@ const rawApiUrl = import.meta.env.VITE_API_URL
 const API_BASE_URL = rawApiUrl ? rawApiUrl.replace(/\/$/, '') : ''
 const TOKEN_STORAGE_KEY = 'fingoat_token'
 export type MarketMode = 'us' | 'cn'
+export type AnalystType = 'market' | 'social' | 'news' | 'fundamentals'
 
 const withBearerToken = (token: string | null): string => {
     if (!token) return ''
@@ -15,11 +16,14 @@ export interface AnalysisRequest {
     market?: MarketMode
     date: string
     execution_mode?: 'default' | 'openclaw'
+    selected_analysts?: AnalystType[]
     llm_config?: {
         provider?: string
         base_url?: string
         deep_think_llm?: string
         quick_think_llm?: string
+        max_debate_rounds?: number
+        max_risk_discuss_rounds?: number
     }
 }
 
@@ -249,11 +253,19 @@ class TradingService {
         date: string,
         llmConfig?: AnalysisRequest['llm_config'],
         executionMode: AnalysisRequest['execution_mode'] = 'default',
+        selectedAnalysts: AnalystType[] = ['market', 'social', 'news', 'fundamentals'],
     ): Promise<AnalysisTask> {
         const response = await fetch(`${API_BASE_URL}/api/trading/analyze`, {
             method: 'POST',
             headers: this.getAuthHeaders(),
-            body: JSON.stringify({ ticker, market, date, execution_mode: executionMode, llm_config: llmConfig }),
+            body: JSON.stringify({
+                ticker,
+                market,
+                date,
+                execution_mode: executionMode,
+                selected_analysts: selectedAnalysts,
+                llm_config: llmConfig,
+            }),
         })
 
         if (!response.ok) {
@@ -427,6 +439,19 @@ class TradingService {
         }
 
         return response.json()
+    }
+
+    async exportAnalysis(taskId: string, format: 'json' | 'md'): Promise<Blob> {
+        const response = await fetch(`${API_BASE_URL}/api/trading/analysis/${taskId}/export.${format}`, {
+            headers: this.getAuthHeaders(),
+        })
+
+        if (!response.ok) {
+            const error = await response.json().catch(() => ({ error: 'Failed to export analysis' }))
+            throw new Error(error.error || 'Failed to export analysis')
+        }
+
+        return response.blob()
     }
 
     /** Return the raw JWT token string (without Bearer prefix) for use in EventSource URLs */

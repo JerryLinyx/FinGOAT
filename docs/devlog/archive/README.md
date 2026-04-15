@@ -13,4 +13,5 @@ This directory stores frozen documentation snapshots for completed or baseline v
 - `v0.1.0`
 - `v0.1.1`
 - `v0.1.2`
-- `v0.1.4` (latest baseline)
+- `v0.1.4`
+- `v0.1.5` (latest baseline)

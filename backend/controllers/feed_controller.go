@@ -35,11 +35,25 @@ var (
 	feedHTMLTitleRegex       = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 	feedHTMLAnchorRegex      = regexp.MustCompile(`(?is)<a[^>]+href=["']([^"']+)["'][^>]*>(.*?)</a>`)
 	feedHTMLStripRegex       = regexp.MustCompile(`(?is)<[^>]*>`)
+	feedHTMLTagRegex         = regexp.MustCompile(`<[^>]*>`)
 	feedMetaPropertyTemplate = `(?is)<meta[^>]+(?:property|name)=["']%s["'][^>]+content=["']([^"']+)["'][^>]*>`
 	feedTimeDatetimeRegex    = regexp.MustCompile(`(?is)<time[^>]+datetime=["']([^"']+)["'][^>]*>`)
 	feedTickerDollarRegex    = regexp.MustCompile(`\$([A-Z]{1,5})(?:\b|$)`)
 	feedTickerWordRegex      = regexp.MustCompile(`\b[A-Z]{2,5}\b`)
+	feedHTTPClient           = &http.Client{Timeout: 10 * time.Second}
 	feedSchedulerOnce        sync.Once
+	feedTrackingPrefixes     = []string{"utm_"}
+	feedTrackingKeys         = map[string]struct{}{
+		"fbclid":  {},
+		"gclid":   {},
+		"mc_cid":  {},
+		"mc_eid":  {},
+		"ref":     {},
+		"ref_src": {},
+		"source":  {},
+		"spm":     {},
+		"from":    {},
+	}
 )
 
 type fetchedFeedItem struct {
@@ -112,6 +126,42 @@ type sitemapIndex struct {
 	Sitemaps []struct {
 		Loc string `xml:"loc"`
 	} `xml:"sitemap"`
+}
+
+type rssItem struct {
+	Title       string
+	Link        string
+	Description string
+	PublishedAt *time.Time
+	GUID        string
+}
+
+type rssEnvelope struct {
+	Channel struct {
+		Items []struct {
+			Title       string `xml:"title"`
+			Link        string `xml:"link"`
+			Description string `xml:"description"`
+			GUID        string `xml:"guid"`
+			PubDate     string `xml:"pubDate"`
+		} `xml:"item"`
+	} `xml:"channel"`
+}
+
+type atomLink struct {
+	Href string `xml:"href,attr"`
+}
+
+type atomEnvelope struct {
+	Entries []struct {
+		Title     string     `xml:"title"`
+		Links     []atomLink `xml:"link"`
+		Summary   string     `xml:"summary"`
+		Content   string     `xml:"content"`
+		ID        string     `xml:"id"`
+		Updated   string     `xml:"updated"`
+		Published string     `xml:"published"`
+	} `xml:"entry"`
 }
 
 var defaultFeedSources = []models.FeedSource{
@@ -210,6 +260,142 @@ func ensureDefaultFeedSources(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func normalizeArticleLink(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return trimmed
+	}
+
+	parsed.Fragment = ""
+	query := parsed.Query()
+	for key := range query {
+		lowerKey := strings.ToLower(key)
+		if _, tracked := feedTrackingKeys[lowerKey]; tracked {
+			query.Del(key)
+			continue
+		}
+		for _, prefix := range feedTrackingPrefixes {
+			if strings.HasPrefix(lowerKey, prefix) {
+				query.Del(key)
+				break
+			}
+		}
+	}
+	parsed.RawQuery = query.Encode()
+	if parsed.Path != "/" {
+		parsed.Path = strings.TrimRight(parsed.Path, "/")
+	}
+	return parsed.String()
+}
+
+func parseTimeString(value string) *time.Time {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	layouts := []string{
+		time.RFC3339,
+		time.RFC3339Nano,
+		time.RFC1123Z,
+		time.RFC1123,
+		time.RFC850,
+		"Mon, 02 Jan 2006 15:04:05 -0700",
+		"Mon, 2 Jan 2006 15:04:05 -0700",
+	}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			return &parsed
+		}
+	}
+	return nil
+}
+
+func sanitize(text string) string {
+	clean := feedHTMLTagRegex.ReplaceAllString(text, "")
+	clean = strings.ReplaceAll(clean, "\n", " ")
+	clean = strings.ReplaceAll(clean, "\r", " ")
+	return strings.TrimSpace(clean)
+}
+
+func truncate(text string, maxLen int) string {
+	if len(text) <= maxLen {
+		return text
+	}
+	if maxLen <= 3 {
+		return text[:maxLen]
+	}
+	return text[:maxLen-3] + "..."
+}
+
+func parseRSS(data []byte) ([]rssItem, error) {
+	var rss rssEnvelope
+	if err := xml.Unmarshal(data, &rss); err != nil {
+		return nil, err
+	}
+
+	items := make([]rssItem, 0, len(rss.Channel.Items))
+	for _, item := range rss.Channel.Items {
+		link := strings.TrimSpace(item.Link)
+		title := strings.TrimSpace(item.Title)
+		if link == "" || title == "" {
+			continue
+		}
+		items = append(items, rssItem{
+			Title:       title,
+			Link:        link,
+			Description: item.Description,
+			PublishedAt: parseTimeString(item.PubDate),
+			GUID:        strings.TrimSpace(item.GUID),
+		})
+	}
+	return items, nil
+}
+
+func parseAtom(data []byte) ([]rssItem, error) {
+	var atom atomEnvelope
+	if err := xml.Unmarshal(data, &atom); err != nil {
+		return nil, err
+	}
+
+	items := make([]rssItem, 0, len(atom.Entries))
+	for _, entry := range atom.Entries {
+		link := ""
+		for _, candidate := range entry.Links {
+			if strings.TrimSpace(candidate.Href) != "" {
+				link = strings.TrimSpace(candidate.Href)
+				break
+			}
+		}
+		if link == "" {
+			continue
+		}
+		title := strings.TrimSpace(entry.Title)
+		if title == "" {
+			continue
+		}
+		published := parseTimeString(entry.Published)
+		if published == nil {
+			published = parseTimeString(entry.Updated)
+		}
+		description := entry.Summary
+		if description == "" {
+			description = entry.Content
+		}
+		items = append(items, rssItem{
+			Title:       title,
+			Link:        link,
+			Description: description,
+			PublishedAt: published,
+			GUID:        strings.TrimSpace(entry.ID),
+		})
+	}
+	return items, nil
 }
 
 func runFeedIngestCycle(ctx context.Context) {
@@ -335,7 +521,7 @@ func fetchRSSSourceItems(ctx context.Context, source models.FeedSource) ([]fetch
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := feedHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -386,7 +572,7 @@ func fetchHTMLSourceItems(ctx context.Context, source models.FeedSource) ([]fetc
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := feedHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -460,7 +646,7 @@ func fetchSitemapSourceItems(ctx context.Context, source models.FeedSource) ([]f
 	if err != nil {
 		return nil, err
 	}
-	resp, err := httpClient.Do(req)
+	resp, err := feedHTTPClient.Do(req)
 	if err != nil {
 		return nil, err
 	}

@@ -10,11 +10,13 @@ Stabilize the execution path and remove API boundary overlap between Go and Pyth
 
 - Go remains the only external trading API boundary
 - Python trading service is reduced to internal worker/runtime responsibilities
-- Python public task APIs are restricted/deprecated for production path
+- Python public task APIs are removed from the production path
 - Task state model redesign
 - Redis-backed execution coordination
 - PostgreSQL-backed persistent task truth
 - Go/Python response schema cleanup
+- duplicate market-data endpoints removed from `trading-service`
+- `articles` / `langchain-v1` / CLI removed from the main repository
 
 ### Risks
 
@@ -50,6 +52,7 @@ Reduce future iteration cost.
 
 - Configuration source-of-truth rules
 - Frontend state/module cleanup
+- Web/API replacement for former CLI controls (`selected_analysts`, research depth, export)
 - User profile page + backend profile API
 - User API key configuration page + secure key management contract
 - [x] Chart query history panel (deduplicated symbols + recency pin-to-top)
@@ -62,6 +65,7 @@ Reduce future iteration cost.
 - API key storage/security design may delay UI rollout if backend contract is not finalized first.
 - If history is local-only in MVP, cross-device consistency remains a known gap.
 - If duplicate check is only frontend-side, concurrent submissions can still bypass guard.
+- Legacy cleanup can break stale local scripts that still target removed Python endpoints.
 
 ## Phase 4: Analysis Quality Enhancements
 

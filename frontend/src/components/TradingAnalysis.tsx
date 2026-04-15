@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import type { ChangeEvent, FormEvent } from 'react'
 import { tradingService, type AnalysisTask, type StreamEvent } from '../services/tradingService'
-import type { MarketMode } from '../services/tradingService'
+import type { AnalystType, MarketMode } from '../services/tradingService'
 import { AgentResultsModule } from './AgentResultsModule'
 import { AnalystLiveGrid, type AnalystLiveCardState } from './AnalystLiveGrid'
 import {
@@ -49,9 +49,22 @@ interface TradingAnalysisProps {
     llmBaseUrl?: string
     executionMode: 'default' | 'openclaw'
     configuredProviders: Set<string>
+    selectedAnalysts: AnalystType[]
+    maxDebateRounds: number
+    maxRiskDiscussRounds: number
 }
 
-export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBaseUrl, executionMode, configuredProviders }: TradingAnalysisProps) {
+export function TradingAnalysis({
+    onSessionExpired,
+    llmProvider,
+    llmModel,
+    llmBaseUrl,
+    executionMode,
+    configuredProviders,
+    selectedAnalysts,
+    maxDebateRounds,
+    maxRiskDiscussRounds,
+}: TradingAnalysisProps) {
     const ACTIVE_TASK_STORAGE_KEY = 'fingoat_active_analysis_task_id'
     const MARKET_STORAGE_KEY = 'fingoat_analysis_market'
     const readStoredMarket = (): MarketMode => (localStorage.getItem(MARKET_STORAGE_KEY) === 'cn' ? 'cn' : 'us')
@@ -604,8 +617,17 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 base_url: llmBaseUrl || undefined,
                 quick_think_llm: llmModel,
                 deep_think_llm: llmModel,
+                max_debate_rounds: maxDebateRounds,
+                max_risk_discuss_rounds: maxRiskDiscussRounds,
             }
-            const task = await tradingService.requestAnalysis(ticker.trim(), market, date, llmConfig, executionMode)
+            const task = await tradingService.requestAnalysis(
+                ticker.trim(),
+                market,
+                date,
+                llmConfig,
+                executionMode,
+                selectedAnalysts,
+            )
             applyTaskState(task)
             await pollTask(task.task_id)
         } catch (err) {
@@ -619,6 +641,24 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
             if (pollingTaskIdRef.current === null) {
                 setLoading(false)
             }
+        }
+    }
+
+    const handleExport = async (format: 'json' | 'md') => {
+        if (!currentTask) return
+
+        try {
+            const blob = await tradingService.exportAnalysis(currentTask.task_id, format)
+            const url = window.URL.createObjectURL(blob)
+            const anchor = document.createElement('a')
+            anchor.href = url
+            anchor.download = `${currentTask.ticker}-${currentTask.analysis_date}.${format}`
+            document.body.appendChild(anchor)
+            anchor.click()
+            anchor.remove()
+            window.URL.revokeObjectURL(url)
+        } catch (err) {
+            setError(err instanceof Error ? err.message : 'Failed to export analysis')
         }
     }
 
@@ -743,6 +783,16 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
         }
     }
 
+    const activeTopLevelStageIds = (currentTask?.stages ?? [])
+        .map((stage) => stage.stage_id)
+        .filter((stageId): stageId is TopLevelAnalystStage =>
+            TOP_LEVEL_ANALYSTS.some((item) => item.stageId === stageId as TopLevelAnalystStage),
+        )
+
+    const visibleAnalystStageIds = activeTopLevelStageIds.length > 0
+        ? activeTopLevelStageIds
+        : selectedAnalysts
+
     const analystCards = TOP_LEVEL_ANALYSTS.map((definition) => {
         const live = analystLive[definition.stageId]
         const stage = currentTask?.stages?.find((item) => item.stage_id === definition.stageId)
@@ -761,7 +811,7 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
             llmCalls: live.llmCalls ?? stage?.llm_calls,
             error: live.error ?? stage?.error ?? null,
         }
-    })
+    }).filter((definition) => visibleAnalystStageIds.includes(definition.stageId))
 
     const renderAnalysisResult = () => {
         if (!currentTask) return null
@@ -809,6 +859,16 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                             <button type="button" className="secondary-button" onClick={handleClearCurrentTask}>
                                 Back to Recent Analyses
                             </button>
+                        )}
+                        {currentTask.status === 'completed' && (
+                            <>
+                                <button type="button" className="secondary-button" onClick={() => handleExport('json')}>
+                                    Export JSON
+                                </button>
+                                <button type="button" className="secondary-button" onClick={() => handleExport('md')}>
+                                    Export Markdown
+                                </button>
+                            </>
                         )}
                     </div>
                 </div>
@@ -961,15 +1021,11 @@ export function TradingAnalysis({ onSessionExpired, llmProvider, llmModel, llmBa
                 >
                     {(loading || isLaunching) ? (
                         <>
-                            <span className={isLaunching ? 'rocket-icon launching' : 'button-spinner'}>
-                                {isLaunching ? '🚀' : ''}
-                            </span>
-                            {isLaunching ? 'Launching...' : 'Analyzing...'}
+                            {isLaunching ? <span className="button-pulse" aria-hidden="true" /> : <span className="button-spinner" />}
+                            {isLaunching ? 'Preparing Analysis...' : 'Running Analysis...'}
                         </>
                     ) : (
-                        <>
-                            <span className="rocket-icon">🚀</span> Analyze Stock
-                        </>
+                        <>Run Analysis</>
                     )}
                 </button>
             </form>

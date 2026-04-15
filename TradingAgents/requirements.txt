@@ -20,7 +20,5 @@ tqdm
 pytz
 redis
 chainlit
-rich
-questionary
 langchain_anthropic
 langchain-google-genai
